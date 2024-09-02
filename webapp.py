@@ -2,15 +2,11 @@ import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import io
 import os
-from dotenv import load_dotenv
 from openai import OpenAI
 import urllib.request
 
-# .env 파일에서 환경 변수 로드
-load_dotenv()
-
 # OpenAI API 키 설정
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # 세션 상태 초기화
 if "page" not in st.session_state:

@@ -7,10 +7,10 @@ from openai import OpenAI
 import urllib.request
 
 # .env 파일에서 환경 변수 로드
-# load_dotenv()
+load_dotenv()
 
 # OpenAI API 키 설정
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # 세션 상태 초기화
 if "page" not in st.session_state:
@@ -37,9 +37,9 @@ if len(st.session_state["selected_images"]) != st.session_state["cut_count"]:
 if "current_cut_index" not in st.session_state:
     st.session_state["current_cut_index"] = 0
 
+# generate_image 함수 수정
 def generate_image(prompt):
     try:
-        client = openai.OpenAI()
         response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,

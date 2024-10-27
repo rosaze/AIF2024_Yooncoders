@@ -2,39 +2,91 @@ import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import io
 import os
+from bs4 import BeautifulSoup
+import re
 from openai import OpenAI
 import urllib.request
+from dotenv import load_dotenv
+import requests
+from user_input import render_news_search
 
-# OpenAI API 키 설정
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# .env 파일 로드
+load_dotenv()
+
+# API 키 설정
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
+NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 # 세션 상태 초기화
 if "page" not in st.session_state:
-    st.session_state.page = "template_selection"
+    st.session_state.page = "news_search"
 
-if "character_selected" not in st.session_state:
-    st.session_state["character_selected"] = None
+if "selected_article" not in st.session_state:
+    st.session_state.selected_article = None
 
-if "bubble_positions" not in st.session_state:
-    st.session_state["bubble_positions"] = {}
-
-if "bubble_texts" not in st.session_state:
-    st.session_state["bubble_texts"] = {}
+if "article_content" not in st.session_state:
+    st.session_state.article_content = None
 
 if "cut_count" not in st.session_state:
-    st.session_state["cut_count"] = 1
+    st.session_state.cut_count = 3
 
 if "selected_images" not in st.session_state:
-    st.session_state["selected_images"] = []
-
-if len(st.session_state["selected_images"]) != st.session_state["cut_count"]:
-    st.session_state["selected_images"] = [None] * st.session_state["cut_count"]
+    st.session_state.selected_images = [None] * st.session_state.cut_count
 
 if "current_cut_index" not in st.session_state:
-    st.session_state["current_cut_index"] = 0
+    st.session_state.current_cut_index = 0
 
-# generate_image 함수 수정
+def search_news(query, sort='sim'):
+    """네이버 뉴스 API를 통해 뉴스 검색"""
+    url = f"https://openapi.naver.com/v1/search/news.json"
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
+    }
+    params = {
+        "query": query,
+        "sort": sort,
+        "display": 10
+    }
+    
+    response = requests.get(url, headers=headers, params=params)
+    return response.json() if response.status_code == 200 else None
+
+def extract_news_info(article_url):
+    """네이버 뉴스 기사 내용 추출"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(article_url, headers=headers)
+        response.raise_for_status()  # 오류 발생시 예외 발생
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 네이버 뉴스 본문 찾기
+        article = soup.select_one('#dic_area')  # 네이버 뉴스 본문 영역의 ID
+        if not article:
+            article = soup.select_one('#articeBody')  # 다른 가능한 본문 영역 ID
+            
+        if article:
+            # 본문에서 불필요한 요소 제거
+            for tag in article.select('script, iframe, style'):
+                tag.decompose()
+                
+            # 텍스트 추출 및 정제
+            content = article.get_text(strip=True)
+            content = re.sub(r'\s+', ' ', content)  # 연속된 공백 제거
+            return content
+        else:
+            return "기사 내용을 찾을 수 없습니다."
+            
+    except Exception as e:
+        st.error(f"기사 내용 추출 중 오류 발생: {str(e)}")
+        return None
+
 def generate_image(prompt):
+    """DALL-E를 사용하여 이미지 생성"""
     try:
         response = client.images.generate(
             model="dall-e-3",
@@ -43,13 +95,13 @@ def generate_image(prompt):
             quality="standard",
             n=1,
         )
-        image_url = response.data[0].url
-        return image_url
+        return response.data[0].url
     except Exception as e:
         st.error(f"이미지 생성 중 오류 발생: {str(e)}")
         return None
 
 def save_image(url, save_path="result.png"):
+    """이미지 URL을 로컬에 저장"""
     try:
         urllib.request.urlretrieve(url, save_path)
         return save_path
@@ -57,161 +109,98 @@ def save_image(url, save_path="result.png"):
         st.error(f"이미지 저장 중 오류 발생: {str(e)}")
         return None
 
-# 페이지 간 이동 함수
 def navigate_to(page):
+    """페이지 이동"""
     st.session_state.page = page
 
 # 사이드바 네비게이션
 st.sidebar.title("네비게이션")
-st.sidebar.button("템플릿 선택", on_click=lambda: navigate_to("template_selection"))
-st.sidebar.button("캐릭터 선택", on_click=lambda: navigate_to("character_selection"))
-st.sidebar.button("웹툰 생성", on_click=lambda: navigate_to("create_webtoon"))
-st.sidebar.button("컷 생성 및 선택", on_click=lambda: navigate_to("select_cuts"))
-st.sidebar.button("말풍선 및 텍스트 추가", on_click=lambda: navigate_to("add_bubbles"))
+st.sidebar.button("뉴스 검색", on_click=lambda: navigate_to("news_search"))
+st.sidebar.button("웹툰 생성", on_click=lambda: navigate_to("generate_webtoon"))
 st.sidebar.button("최종 결과", on_click=lambda: navigate_to("final_result"))
 
-# 템플릿 선택 페이지
-if st.session_state.page == "template_selection":
-    st.title("템플릿 선택")
-    template = st.selectbox(
-        "웹툰 템플릿을 선택하세요:",
-        ["템플릿1 - 기본 스타일", "템플릿2 - 교육 자료 스타일", "템플릿3 - 단순한 웹툰 스타일"]
-    )
-    st.write(f"선택된 템플릿: {template}")
-    st.button("다음", on_click=lambda: navigate_to("character_selection"))
-
-# 캐릭터 선택 페이지
-elif st.session_state.page == "character_selection":
-    st.title("캐릭터 선택")
-    character_selection = st.radio("캐릭터를 선택하시겠습니까?", ("예", "아니오"))
+# 뉴스 검색 페이지
+if st.session_state.page == "news_search":
+    st.title("뉴스 검색")
     
-    if st.button("다음"):
-        st.session_state["character_selected"] = True if character_selection == "예" else False
-        navigate_to("create_webtoon")
+    search_option = st.radio("검색 방식 선택", ["키워드 검색", "URL 직접 입력"])
+    
+    if search_option == "키워드 검색":
+        search_query = st.text_input("검색어를 입력하세요:")
+        sort_option = st.selectbox("정렬 방식", ["정확도순", "최신순"], key="sort")
+    
+        if st.button("검색") and search_query:
+            sort_param = 'sim' if sort_option == "정확도순" else 'date'
+            results = search_news(search_query, sort_param)
+        
+            if results and 'items' in results:
+                st.session_state.search_results = results['items']
+                for idx, item in enumerate(results['items']):
+                    st.markdown(f"### {item['title']}")
+                    st.write(item['description'])
+                    if st.button(f"이 기사로 웹툰 만들기", key=f"select_{idx}"):
+                        st.session_state.selected_article = item
+                        st.session_state.article_content = extract_news_info(item['originallink'])
+                        navigate_to("generate_webtoon")
+    
+    else:  # URL 직접 입력
+        article_url = st.text_input("뉴스 기사 URL을 입력하세요:")
+        if st.button("기사 가져오기") and article_url:
+            content = extract_news_info(article_url)
+            if content:
+                st.session_state.article_content = content
+                st.success("기사 내용을 성공적으로 가져왔습니다!")
+                st.markdown("### 가져온 기사 내용")
+
+                 # 스크롤 가능한 텍스트 영역 생성
+                st.text_area("", value=content, height=300)
+            # 또는 container를 사용한 방법:
+            # with st.container():
+            #     st.markdown(f"""
+            #         <div style="height: 300px; overflow-y: auto; padding: 10px; border: 1px solid #ccc; border-radius: 5px;">
+            #             {content}
+            #         </div>
+            #         """, unsafe_allow_html=Tru
+                if st.button("이 기사로 웹툰 만들기"):
+                    navigate_to("generate_webtoon")
+            else:
+                st.error("기사 내용을 가져오는데 실패했습니다.")
 
 # 웹툰 생성 페이지
-elif st.session_state.page == "create_webtoon":
+elif st.session_state.page == "generate_webtoon":
     st.title("웹툰 생성")
-    st.markdown("## 필수 요소 선택")
-
-    auto_elements = {"인물": "학생", "장소": "학교", "시간대": "낮"}
-    user_elements = {}
-
-    for key, value in auto_elements.items():
-        user_elements[key] = st.text_input(f"{key} (자동 생성):", value)
     
-    user_input = st.text_input("프롬프트를 입력하세요:")
-
-    if "을미사변" in user_input:
-        st.write("🔍 추천 프롬프트:")
-        st.write("1️⃣ 중학교 2학년이 알아들을 수 있는 정도의 스토리보드")
-        st.write("2️⃣ 유치원생이 이해할 수 있는 수준으로 구성")
-    
-    st.session_state["cut_count"] = st.number_input("생성할 컷 수를 입력하세요", min_value=1, step=1, value=3)
-    
-    st.session_state["selected_images"] = [None] * st.session_state["cut_count"]
-    
-    st.write(f"컷 {st.session_state['cut_count']}개가 생성될 예정입니다.")
-    
-    if st.button("다음"):
-        st.session_state["current_cut_index"] = 0
-        navigate_to("select_cuts")
-
-# 컷 선택 페이지
-elif st.session_state.page == "select_cuts":
-    st.title(f"컷 {st.session_state['current_cut_index'] + 1} 선택")
-
-    # 실제 이미지 생성 로직 추가
-    if st.button("이미지 생성"):
-        prompt = f"웹툰 스타일의 {st.session_state['current_cut_index'] + 1}번째 컷"
-        image_url = generate_image(prompt)
-        if image_url:
-            image_path = save_image(image_url, f"cut_{st.session_state['current_cut_index'] + 1}.png")
-            if image_path:
-                st.session_state["selected_images"][st.session_state["current_cut_index"]] = Image.open(image_path)
-                st.success("이미지가 성공적으로 생성되었습니다.")
-            else:
-                st.error("이미지 저장에 실패했습니다.")
-        else:
-            st.error("이미지 생성에 실패했습니다.")
-
-    # 선택된 이미지 표시
-    selected_image = st.session_state["selected_images"][st.session_state["current_cut_index"]]
-    if selected_image:
-        st.image(selected_image, caption=f"선택된 컷 {st.session_state['current_cut_index'] + 1} 이미지")
-
-    # 네비게이션: 다음 컷으로 이동 또는 다음 단계로
-    if st.session_state["current_cut_index"] < st.session_state["cut_count"] - 1:
-        if selected_image and st.button("다음 컷"):
-            st.session_state["current_cut_index"] += 1
-    else:
-        if all(st.session_state["selected_images"]) and st.button("말풍선 추가로 넘어가기"):
-            navigate_to("add_bubbles")
-
-# 말풍선 추가 페이지
-elif st.session_state.page == "add_bubbles":
-    st.title(f"컷 {st.session_state['current_cut_index'] + 1} 말풍선 추가")
-
-    img = st.session_state["selected_images"][st.session_state["current_cut_index"]]
-    st.image(img, caption=f"선택된 컷 {st.session_state['current_cut_index'] + 1} 이미지")
-
-    if st.button(f"컷 {st.session_state['current_cut_index'] + 1}에 말풍선 위치 추가"):
-        new_position = (50, 50)  # 사용자가 선택한 위치로 대체 필요
-        if st.session_state["current_cut_index"] not in st.session_state["bubble_positions"]:
-            st.session_state["bubble_positions"][st.session_state["current_cut_index"]] = []
-        st.session_state["bubble_positions"][st.session_state["current_cut_index"]].append(new_position)
-        st.success(f"컷 {st.session_state['current_cut_index'] + 1}에 말풍선 위치가 추가되었습니다: {new_position}")
-
-    num_bubbles = len(st.session_state["bubble_positions"].get(st.session_state["current_cut_index"], []))
-    st.markdown(f"### 컷 {st.session_state['current_cut_index'] + 1} 말풍선 텍스트 입력")
-
-    for j in range(num_bubbles):
-        text_input = st.text_input(f"컷 {st.session_state['current_cut_index'] + 1} 말풍선 {j + 1} 텍스트 입력", key=f"text_input_{st.session_state['current_cut_index']}_{j}")
-        if st.session_state["current_cut_index"] not in st.session_state["bubble_texts"]:
-            st.session_state["bubble_texts"][st.session_state["current_cut_index"]] = []
-        if len(st.session_state["bubble_texts"][st.session_state["current_cut_index"]]) <= j:
-            st.session_state["bubble_texts"][st.session_state["current_cut_index"]].append(text_input)
-        else:
-            st.session_state["bubble_texts"][st.session_state["current_cut_index"]][j] = text_input
-
-    if st.session_state["current_cut_index"] < st.session_state["cut_count"] - 1:
-        if st.button("다음 컷"):
-            st.session_state["current_cut_index"] += 1
-    else:
-        if st.button("최종 결과로 넘어가기"):
-            navigate_to("final_result")
+    if st.session_state.article_content:
+        st.markdown("### 선택된 기사 내용")
+        st.write(st.session_state.article_content)
+        
+        if st.button("웹툰 생성 시작"):
+            # 여기에 웹툰 생성 로직 구현
+            prompt = f"웹툰 스타일의 뉴스 기사 장면: {st.session_state.article_content[:200]}"
+            image_url = generate_image(prompt)
+            if image_url:
+                image_path = save_image(image_url, f"cut_{st.session_state.current_cut_index + 1}.png")
+                if image_path:
+                    st.session_state.selected_images[st.session_state.current_cut_index] = Image.open(image_path)
+                    st.success("이미지가 생성되었습니다.")
+                    navigate_to("final_result")
 
 # 최종 결과 페이지
 elif st.session_state.page == "final_result":
     st.title("최종 결과")
-
-    for i, img in enumerate(st.session_state["selected_images"]):
-        st.markdown(f"### 컷 {i + 1}")
-        draw = ImageDraw.Draw(img)
-        
-        try:
-            font = ImageFont.truetype("NanumGothic.ttf", 24)  # 한글 지원 폰트로 변경
-        except IOError:
-            st.warning("지정된 폰트를 찾을 수 없습니다. 기본 폰트를 사용합니다.")
-            font = ImageFont.load_default()
-
-        positions = st.session_state["bubble_positions"].get(i, [])
-        texts = st.session_state["bubble_texts"].get(i, [])
-
-        for position, text in zip(positions, texts):
-            bubble_width, bubble_height = 150, 80
-            draw.ellipse([position, (position[0] + bubble_width, position[1] + bubble_height)], outline="black", width=2)
-            draw.text((position[0] + 10, position[1] + 10), text, font=font, fill="black")
-        
-        st.image(img, caption=f"최종 컷 {i + 1} 이미지", use_column_width=True)
-
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format="PNG")
-        img_bytes.seek(0)
-
-        st.download_button(
-            label="이미지 다운로드",
-            data=img_bytes,
-            file_name=f"final_webtoon_cut_{i+1}.png",
-            mime="image/png"
-        )
+    
+    for i, img in enumerate(st.session_state.selected_images):
+        if img:
+            st.markdown(f"### 컷 {i + 1}")
+            st.image(img, caption=f"생성된 웹툰 컷 {i + 1}", use_column_width=True)
+            
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format="PNG")
+            img_bytes.seek(0)
+            
+            st.download_button(
+                label=f"컷 {i + 1} 다운로드",
+                data=img_bytes,
+                file_name=f"news_webtoon_cut_{i+1}.png",
+                mime="image/png"
+            )

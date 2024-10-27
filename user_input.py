@@ -93,3 +93,6 @@ def render_news_search():
                     st.rerun()
             else:
                 st.error("기사 내용을 가져오는데 실패했습니다.")
+
+
+              

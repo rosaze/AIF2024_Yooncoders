@@ -89,11 +89,18 @@ def render_news_search():
                     col1, col2 = st.columns([4, 1])
                     
                     with col1:
-                        st.markdown(f"### {item['title']}")
-                        st.write(item['description'])
+                        # 제목을 클릭하면 기사 URL로 연결되도록 설정
+                        article_title = item['title'].replace('<b>', '').replace('</b>', '')  # <b> 태그 제거
+                        article_url = item.get('originallink', item['link'])
+                        st.markdown(f"### [{article_title}]({article_url})", unsafe_allow_html=True)
+
+                        # 본문 미리보기 (일부만 표시)
+                        article_description = item['description'].replace('<b>', '').replace('</b>', '')  # <b> 태그 제거
+                        truncated_preview = article_description[:100] + '...'  # 본문 일부 표시
+                        st.write(truncated_preview)
                     
                     with col2:
-                        # 간단한 숫자 키 사용
+                        # 웹툰 만들기 버튼
                         if st.button("웹툰 만들기", key=f"btn_{idx}"):
                             logger.info(f"Button clicked for article {idx}")
                             news_url = item['link']
@@ -133,9 +140,10 @@ def render_news_search():
                         
                         if st.button("웹툰 만들기", key="create_webtoon"):
                             st.session_state.page = 'generate_webtoon'
-                            st.rerun()
+                            st.rerun()#experimental_rerun 안됨
                     else:
                         st.error("기사를 가져오는데 실패했습니다.")
+
 
 def extract_news_content(url):
     """네이버 뉴스 기사 내용 추출"""

@@ -65,13 +65,9 @@ if st.session_state.page == "news_search":
 
 # 웹툰 생성 페이지
 elif st.session_state.page == "generate_webtoon":
-    st.title("웹툰 생성")
-     # 디버깅을 위한 상태 출력
-    st.write("현재 상태:", {
-        "article_content": bool(st.session_state.article_content),
-        "selected_article": bool(st.session_state.selected_article),
-        "page": st.session_state.page
-    })
+    st.markdown("<h1 style='text-align: center;'>웹툰 생성</h1>",
+    unsafe_allow_html=True)
+    #여기에 디버깅시 필요한 출력문 추가 
     
     if st.session_state.article_content:
         st.markdown("### 선택된 기사 내용")

@@ -94,7 +94,7 @@ def render_news_search():
                                 st.session_state.article_content = content
                                 st.session_state.selected_article = {'title': item['title'], 'url': news_url}
                                 st.session_state.page = 'generate_webtoon'
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error("기사 내용을 가져올 수 없습니다.")
     else:  # URL 직접 입력
@@ -116,3 +116,19 @@ def render_news_search():
                         st.experimental_rerun()
                 else:
                     st.error("기사를 가져오는데 실패했습니다.")
+
+def generate_final_prompt(article_content, extracted_info, simplified_content, webtoon_episode):
+    """
+    DALL-E 이미지를 생성하기 위한 프롬프트를 작성합니다.
+    """
+    # 주요 내용, 간소화된 용어, 에피소드 정보 포함하여 프롬프트 작성
+    prompt = (
+        f"Create a webtoon scene based on the following content:\n\n"
+        f"1. **Article Overview**: {article_content}\n\n"
+        f"2. **Key Information**: {extracted_info}\n\n"
+        f"3. **Simplified Content**: {simplified_content}\n\n"
+        f"4. **Webtoon Episode Details**: {webtoon_episode}\n\n"
+        f"Please ensure the scene has a webtoon style with appropriate emotion, setting, and context. "
+        f"Use vibrant colors, keep details clear, and avoid including text in the image. Limit characters to two or fewer, and exclude unmentioned details."
+    )
+    return prompt

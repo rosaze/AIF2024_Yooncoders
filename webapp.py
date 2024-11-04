@@ -6,8 +6,10 @@ import openai
 import requests
 from dotenv import load_dotenv
 
+
 from article_org import extract_news_info, simplify_terms_dynamically, generate_webtoon_scenes
-from user_input import render_news_search, search_news
+from user_input import render_news_search, search_news, generate_final_prompt
+from image_gen import generate_image, save_image
 
 # .env 파일 로드
 load_dotenv()
@@ -111,7 +113,24 @@ elif st.session_state.page == "generate_webtoon":
                     st.session_state.selected_images[st.session_state.current_cut_index] = Image.open(image_path)
                     st.success("이미지가 생성되었습니다.")
                     navigate_to("final_result")
-
+        if st.session_state.simplified_content and st.button("웹툰 생성 시작", key="generate_webtoon_button"):
+           # 각 단계의 결과를 기반으로 최종 프롬프트 생성
+            prompt = generate_final_prompt(
+                article_content=st.session_state.article_content,
+                extracted_info=st.session_state.extracted_info,
+                simplified_content=st.session_state.simplified_content,
+                webtoon_episode=st.session_state.webtoon_episode
+                )
+            style = "webtoon"  # 원하는 스타일 추가
+            negative_prompt = "low quality, blurry, no text in the image, avoid unrequested content, limit to two characters"
+            image_url = generate_image(prompt, style=style, negative_prompt=negative_prompt)
+            if image_url:
+                image_path = save_image(image_url, f"cut_{st.session_state.current_cut_index + 1}.png")
+                if image_path:
+                    st.session_state.selected_images[st.session_state.current_cut_index] = Image.open(image_path)
+                    st.session_state.current_cut_index += 1
+                    st.success("이미지가 생성되었습니다.")
+                    navigate_to("final_result")
 
 # 최종 결과 페이지
 elif st.session_state.page == "final_result":
@@ -130,16 +149,3 @@ elif st.session_state.page == "final_result":
         st.write("아직 생성된 웹툰 에피소드가 없습니다.")
 
 
-def generate_image(prompt):
-    try:
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-        return response.data[0].url
-    except Exception as e:
-        st.error(f"이미지 생성 중 오류 발생: {str(e)}")
-        return None

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from article_org import extract_news_info, simplify_terms_dynamically, generate_webtoon_scenes
 from user_input import render_news_search, search_news, generate_final_prompt
 from image_gen import generate_image, save_image
-
+from general_text_input import render_general_text_input # 유석종이 요청한 일반 텍스트 입력 시
 # .env 파일 로드
 load_dotenv()
 
@@ -56,10 +56,17 @@ def navigate_to(page):
     st.session_state.page = page
 
 # 사이드바 네비게이션
+
+st.sidebar.button("일반 텍스트 입력", on_click=lambda: navigate_to("text_input"))
 st.sidebar.title("네비게이션")
 st.sidebar.button("뉴스 검색", on_click=lambda: navigate_to("news_search"))
 st.sidebar.button("웹툰 생성", on_click=lambda: navigate_to("generate_webtoon"))
 st.sidebar.button("최종 결과", on_click=lambda: navigate_to("final_result"))
+
+
+# 일반 텍스트 입력 페이지 연결
+if st.session_state.page == "text_input":
+    render_general_text_input()
 
 # 뉴스 검색 페이지
 if st.session_state.page == "news_search":

@@ -1,15 +1,15 @@
-import openai
+from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import requests
-from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 # .env 파일 로드
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def generate_image(prompt, style="webtoon", negative_prompt="low quality, blurry"):
+
+def generate_image(prompt, style, negative_prompt):
     """DALL-E를 이용하여 이미지 생성"""
     # 프롬프트를 스타일에 맞게 최종적으로 구성합니다.
     full_prompt = f"{style} style, {prompt}. Negative prompt: {negative_prompt}."
@@ -40,31 +40,37 @@ def save_image(image_url, filename):
     except Exception as e:
         print(f"이미지 저장 중 오류 발생: {str(e)}")
         return None
-# DALL-E 이미지 생성 함수
-def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", retries=3):
+def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", negative_prompt=None, retries=3):
     """
     DALL-E API를 통해 이미지를 생성합니다.
-    prompt: 사용자 정의 프롬프트
-    style: 사용자 정의 스타일
-    aspect_ratio: 이미지의 가로 세로 비율 ("1:1", "16:9", "9:16")
-    retries: 재시도 횟수
+    prompt: construct_webtoon_prompt에서 생성된 상세 프롬프트
+    style: 사용자가 선택한 스타일
+    negative_prompt: 부정적 프롬프트
     """
     size = "1024x1024" if aspect_ratio == "1:1" else "1792x1024" if aspect_ratio == "16:9" else "1024x1792"
     
+    # 최종 프롬프트 구성
+    full_prompt = prompt  # construct_webtoon_prompt에서 이미 스타일 정보가 포함됨
+    if negative_prompt:
+        full_prompt += f"\nNegative prompt: {negative_prompt}"
+    
+    print(f"최종 프롬프트: {full_prompt}")  # 디버깅용
+    
     for _ in range(retries):
         try:
-            response = openai.Image.create(
+            response = client.images.generate(
                 model="dall-e-3",
-                prompt=f"{prompt}, in style of {style}",
+                prompt=full_prompt,
                 size=size,
                 n=1,
                 quality="hd"
             )
-            # 응답에서 이미지 URL과 수정된 프롬프트 가져오기
-            image_url = response['data'][0]['url']
-            revised_prompt = response['data'][0].get('revised_prompt', prompt)
-            created_seed = response['created']  # 생성 시점의 seed
+            
+            image_url = response.data[0].url
+            revised_prompt = getattr(response.data[0], 'revised_prompt', full_prompt)
+            created_seed = getattr(response, 'created', None)
             return image_url, revised_prompt, created_seed
+            
         except Exception as e:
             print(f"Error generating image: {e}")
             continue

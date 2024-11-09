@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import requests
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
+import logging
+from PIL import Image
+import io
 # .env 파일 로드
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -40,12 +43,19 @@ def save_image(image_url, filename):
     except Exception as e:
         print(f"이미지 저장 중 오류 발생: {str(e)}")
         return None
-def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", negative_prompt=None, retries=3):
+def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", negative_prompt=None, retries=2):
     """
-    DALL-E API를 통해 이미지를 생성합니다.
-    prompt: construct_webtoon_prompt에서 생성된 상세 프롬프트
-    style: 사용자가 선택한 스타일
-    negative_prompt: 부정적 프롬프트
+     DALL-E API를 통해 이미지를 생성합니다.
+    
+    Args:
+        prompt (str): 상세 프롬프트
+        style (str): 이미지 스타일
+        aspect_ratio (str): 이미지 비율 ("1:1", "16:9", "9:16")
+        negative_prompt (str): 부정적 프롬프트
+        retries (int): 재시도 횟수
+        
+    Returns:
+        tuple: (image_url, revised_prompt, created_seed)
     """
     size = "1024x1024" if aspect_ratio == "1:1" else "1792x1024" if aspect_ratio == "16:9" else "1024x1792"
     
@@ -54,8 +64,9 @@ def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", neg
     if negative_prompt:
         full_prompt += f"\nNegative prompt: {negative_prompt}"
     
-    print(f"최종 프롬프트: {full_prompt}")  # 디버깅용
+    logging.info(f"최종 프롬프트:\n{full_prompt}")  # 디버깅용
     
+    # 이 부분이 retry
     for _ in range(retries):
         try:
             response = client.images.generate(
@@ -77,18 +88,23 @@ def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", neg
     return None, None, None
 
 # 이미지 다운로드 및 표시 함수
-def download_and_display_image(image_url, filename="generated_image.png"):
+def download_and_display_image(image_url, filename=None):
     """
-    이미지 URL을 받아 다운로드 후 로컬에 저장하고 출력합니다.
-    image_url: DALL-E API에서 반환한 이미지 URL
-    filename: 저장할 이미지 파일 이름
+    이미지 URL을 받아 Streamlit에 표시할 수 있는 형태로 반환
     """
-    response = requests.get(image_url)
-    with open(filename, 'wb') as file:
-        file.write(response.content)
+    try:
+        logging.info(f"이미지 다운로드 시작: {image_url}")
+        response = requests.get(image_url)
+        if response.status_code == 200:
+            # 바이트 스트림으로부터 이미지 생성
+            image = Image.open(io.BytesIO(response.content))
+            logging.info("이미지 생성 성공")
+            return image
+        else:
+            logging.error(f"이미지 다운로드 실패: HTTP {response.status_code}")
+            return None
+    except Exception as e:
+        logging.error(f"이미지 처리 중 오류 발생: {str(e)}")
+        return None
 
-    # 이미지 파일을 로드하고 출력
-    img = mpimg.imread(filename)
-    plt.imshow(img)
-    plt.axis('off')
-    plt.show()
+

@@ -2,20 +2,24 @@ import streamlit as st
 from PIL import Image
 import io
 import os
-import openai
+from openai import OpenAI
 import requests
 from dotenv import load_dotenv
 
+# 각 기능별 모듈 import
 from article_org import extract_news_info, simplify_terms_dynamically, generate_webtoon_scenes
-from user_input import render_news_search, search_news
+from user_input import render_news_search, search_news, generate_final_prompt
+from image_gen import generate_image_from_text, download_and_display_image
+from general_text_input import render_general_text_input
 
 # .env 파일 로드
 load_dotenv()
 
-# API 키 설정
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# OpenAI 클라이언트 초기화
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
+
 # 세션 상태 초기화
 if "page" not in st.session_state:
     st.session_state.update({
@@ -31,43 +35,42 @@ if "page" not in st.session_state:
         "NAVER_CLIENT_SECRET": os.getenv("NAVER_CLIENT_SECRET")
     })
 
-def save_image(image_url, filename):
-    # 이미지 다운로드하여 로컬에 저장 
-    try:
-        response = requests.get(image_url)
-        if response.status_code == 200:
-            image_path = os.path.join("generated_images", filename)
-            os.makedirs("generated_images", exist_ok=True)
-            with open(image_path, 'wb') as f:
-                f.write(response.content)
-            return image_path
-        return None
-    except Exception as e:
-        st.error(f"이미지 저장 중 오류 발생: {str(e)}")
-        return None
-    
-
-
-
 def navigate_to(page):
     """페이지 이동"""
     st.session_state.page = page
 
-# 사이드바 네비게이션
-st.sidebar.title("네비게이션")
-st.sidebar.button("뉴스 검색", on_click=lambda: navigate_to("news_search"))
-st.sidebar.button("웹툰 생성", on_click=lambda: navigate_to("generate_webtoon"))
-st.sidebar.button("최종 결과", on_click=lambda: navigate_to("final_result"))
+# 사이드바 네비게이션 - 순서 변경 및 설명 추가
+st.sidebar.title("웹툰 메이커")
+st.sidebar.markdown("""
+### 원하는 방식을 선택하세요:
+1. 일반 텍스트로 웹툰 만들기
+2. 뉴스 기사로 웹툰 만들기
+""")
 
-# 뉴스 검색 페이지
-if st.session_state.page == "news_search":
+tabs = st.sidebar.radio(
+    "생성 방식 선택",
+    ["일반 텍스트 입력", "뉴스 검색"],
+    captions=["자유로운 텍스트로 웹툰 생성", "뉴스 기사 기반 웹툰 생성"]
+)
+
+if tabs == "일반 텍스트 입력":
+    st.session_state.page = "text_input"
+elif tabs == "뉴스 검색":
+    st.session_state.page = "news_search"
+
+# 결과 보기 버튼
+if st.sidebar.button("생성된 결과 보기"):
+    st.session_state.page = "final_result"
+
+# 페이지 렌더링
+if st.session_state.page == "text_input":
+    render_general_text_input()
+
+elif st.session_state.page == "news_search":
     render_news_search()
 
-# 웹툰 생성 페이지
 elif st.session_state.page == "generate_webtoon":
-    st.markdown("<h1 style='text-align: center;'>웹툰 생성</h1>",
-    unsafe_allow_html=True)
-    #여기에 디버깅시 필요한 출력문 추가 
+    st.markdown("<h1 style='text-align: center;'>웹툰 생성</h1>", unsafe_allow_html=True)
     
     if st.session_state.article_content:
         st.markdown("### 선택된 기사 내용")
@@ -102,44 +105,28 @@ elif st.session_state.page == "generate_webtoon":
             st.success("웹툰 에피소드 생성 완료!")
             st.write(webtoon_episode)
 
-        if st.button("웹툰 생성 시작"):
-            prompt = f"웹툰 스타일의 뉴스 기사 장면: {st.session_state.article_content[:200]}"
-            image_url = generate_image(prompt)
-            if image_url:
-                image_path = save_image(image_url, f"cut_{st.session_state.current_cut_index + 1}.png")
-                if image_path:
-                    st.session_state.selected_images[st.session_state.current_cut_index] = Image.open(image_path)
-                    st.success("이미지가 생성되었습니다.")
-                    navigate_to("final_result")
-
-
 # 최종 결과 페이지
 elif st.session_state.page == "final_result":
-    st.title("최종 결과")
-
-    if st.session_state.webtoon_episode:
-        st.subheader("생성된 웹툰 에피소드")
-        st.write(st.session_state.webtoon_episode)
-        
-        # 생성된 이미지들 표시
-        if st.session_state.selected_images:
-            st.subheader("생성된 웹툰 이미지")
-            for idx, image in st.session_state.selected_images.items():
-                st.image(image, caption=f"컷 {idx + 1}")
-    else:
-        st.write("아직 생성된 웹툰 에피소드가 없습니다.")
-
-
-def generate_image(prompt):
-    try:
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
+    st.title("생성된 웹툰")
+    
+    if 'selected_images' in st.session_state and st.session_state.selected_images:
+        # 이미지들을 그리드 형태로 표시
+        cols = st.columns(2)  # 2열 그리드
+        for idx, image in st.session_state.selected_images.items():
+            with cols[idx % 2]:  # 이미지를 번갈아가며 배치
+                st.image(image, caption=f"컷 {idx + 1}", use_column_width=True)
+                
+        # 다운로드 버튼 추가
+        st.download_button(
+            label="웹툰 이미지 다운로드",
+            data=Image.open("generated_images/webtoon_cut_1.png"),
+            file_name="my_webtoon.png",
+            mime="image/png"
         )
-        return response.data[0].url
-    except Exception as e:
-        st.error(f"이미지 생성 중 오류 발생: {str(e)}")
-        return None
+    else:
+        st.info("아직 생성된 이미지가 없습니다. 먼저 웹툰을 생성해주세요!")
+
+    # 새로운 웹툰 생성 버튼
+    if st.button("새로운 웹툰 만들기"):
+        st.session_state.selected_images = {}  # 이미지 초기화
+        st.session_state.page = "text_input"  # 텍스트 입력 페이지로 이동

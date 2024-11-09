@@ -2,8 +2,6 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import logging
 from PIL import Image
 import io

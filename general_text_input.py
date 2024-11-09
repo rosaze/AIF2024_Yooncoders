@@ -58,6 +58,7 @@ def render_general_text_input():
     잘린 이미지, 과도한 필터, 비문법적 구조, 중복된 특징, 
     나쁜 해부학, 나쁜 손, 과도하게 복잡한 배경
     """    
+    #이미지 표시 부분, 이 코드가 가장 중요! ( 버튼 눌렀을때 이벤트 생성 관련 코드임)
     if st.button("이미지 생성 시작"):
         if user_text.strip():
             with st.spinner('장면 분석 및 이미지 생성 중...'):
@@ -76,8 +77,12 @@ def render_general_text_input():
             
             # Progress bar 초기화
             progress_bar = st.progress(0)
+
+             # 이미지를 표시할 열 생성
+            if cut_count > 1:
+                cols = st.columns(min(cut_count, 2))  # 최대 2열까지만 생성
             
-            for i, prompt in enumerate(prompts):
+            for i, prompt in enumerate(prompts[:cut_count]):
                 if i>=cut_count:break
                 image_url, revised_prompt, created_seed = generate_image_from_text(
                     prompt=prompt,
@@ -93,11 +98,33 @@ def render_general_text_input():
                     logging.info(f"생성 시드: {created_seed}")
                     
                     # 이미지 다운로드 및 세션에 저장
-                    filename = f"webtoon_cut_{i + 1}.png"
+                    filename = f"webtoon_cut_{i + 1}.png"#여기 에러나는부분임
                     image=download_and_display_image(image_url)
                     if image:
+                        if cut_count>1: #컨테이너 만들어 이미지와 함께 표시 
+                            with cols[i%2]:
+                                st.image(image,caption=f"컷 {i+1}",use_column_width=True)
+                                #1. 이건 원본설명 (( 아래랑 이거 둘 중 선택))
+                                with st.expander(f"장면 {i+1}상세 설명 "):
+                                    st.markdown("**원본 설명**")# 배치를 바꿔야 할 것 같다..
+                                    st.text(prompt)
+                                    #2. 이건 요약된 설명 표시
+                                    st.markdown("**요약 설명**")
+                                    summary=summarize_scene(prompt)
+                                    st.write(summary)
+                        else:
+                            st.image(image,caption=f"컷 {i+1}",use_column_width=True)
+                            with st.expander(f"컷 {i+1} 상세 설명"):
+                                #탭을 사용하여 원본, 요약 설명 구분 
+                                tab1,tab2=st.tabs(["요약 설명", "상세 설명"])
+                                with tab1:
+                                    summary=summarize_scene(prompt)
+                                    st.write(summary)
+                                with tab2:
+                                    st.text(prompt)
                         st.session_state.selected_images[i] = image
                         st.image(image, caption=f"컷 {i + 1}")
+                        
                     else:
                         st.error(f"컷 {i+1} 이미지 로드 실패")
                 else:
@@ -298,3 +325,25 @@ def generate_visual_sequence(text, cut_count, style, composition, mood, characte
     
     return final_prompts
 
+#이미지에 설명 추가 ( 그니까 컷 밑에, 이미지에 대한 요약 or 장면 설명)
+# 이 부분은 앞으로 계속 수정할 부분.
+
+def summarize_scene(prompt):
+    """
+    장면 프롬프트를 간단한 설명으로 요약합니다.
+    """
+    client = OpenAI()
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "주어진 장면 설명을 2-3문장으로 간단히 요약해주세요."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=150,
+            temperature=0.7
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"장면 요약 생성 중 오류 발생: {str(e)}")
+        return prompt.split('\n')[0]  # 첫 줄만 반환

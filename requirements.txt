@@ -1,6 +1,6 @@
-openai
-streamlit
-requests
-beautifulsoup4
-python-dotenv
-Pillow
+openai==1.53.0
+streamlit==1.39.0
+requests==2.32.3
+beautifulsoup4==4.12.3
+python-dotenv==1.0.1
+Pillow==10.4.0

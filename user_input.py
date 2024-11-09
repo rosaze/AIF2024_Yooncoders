@@ -94,7 +94,7 @@ def render_news_search():
                                 st.session_state.article_content = content
                                 st.session_state.selected_article = {'title': item['title'], 'url': news_url}
                                 st.session_state.page = 'generate_webtoon'
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error("기사 내용을 가져올 수 없습니다.")
     else:  # URL 직접 입력
@@ -113,6 +113,6 @@ def render_news_search():
                 # 웹툰 만들기 버튼
                     if st.button("웹툰 만들기"):
                         st.session_state.page = 'generate_webtoon'
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
                     st.error("기사를 가져오는데 실패했습니다.")

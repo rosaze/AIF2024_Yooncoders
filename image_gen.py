@@ -12,20 +12,22 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def generate_image(prompt, style, negative_prompt):
     """DALL-E를 이용하여 이미지 생성"""
-    # 프롬프트를 스타일에 맞게 최종적으로 구성합니다.
-    full_prompt = f"{style} style, {prompt}. Negative prompt: {negative_prompt}."
-
     try:
-        response = openai.Image.create(
-            prompt=full_prompt,
-            n=1,
-            size="1024x1024"
+        # OpenAI 이미지 생성 요청
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="hd",
+            n=1
         )
-        image_url = response['data'][0]['url']
-        return image_url
+        
+        # URL 반환
+        return response.data[0].url
+        
     except Exception as e:
-        print(f"이미지 생성 중 오류 발생: {str(e)}")
-        return None
+        logging.error(f"이미지 생성 실패: {str(e)}")
+        raise RuntimeError(f"이미지 생성 실패: {str(e)}")
 
 def save_image(image_url, filename):
     """이미지를 URL에서 다운로드하여 로컬에 저장"""
@@ -41,6 +43,7 @@ def save_image(image_url, filename):
     except Exception as e:
         print(f"이미지 저장 중 오류 발생: {str(e)}")
         return None
+    
 def generate_image_from_text(prompt, style="minimalist", aspect_ratio="1:1", negative_prompt=None, retries=2):
     """
      DALL-E API를 통해 이미지를 생성합니다.

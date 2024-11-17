@@ -211,7 +211,8 @@ class TextToWebtoonConverter:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
-            
+            messages=messages
+            st.text_area("Request Messages", value=f"{messages}", height=200)
             return response.choices[0].message.content.strip()
         except Exception as e:
             logging.error(f"Scene description creation failed: {str(e)}")

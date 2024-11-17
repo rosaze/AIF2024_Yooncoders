@@ -260,21 +260,34 @@ class TextToWebtoonConverter:
             raise
 
     def summarize_scene(self, description: str) -> str:
-        """장면 설명 요약"""
+        #장면 설명 요약"""
         try:
+            prompt = """웹툰의 한 장면을 간단히 설명해주세요.
+        - 한 문장으로 작성할 것
+        - 캐릭터의 감정이나 심리 상태가 아닌, 객관적인 상황 묘사에 집중
+        - 예시: "한적한 카페에서 두 사람이 마주 앉아 대화를 나누고 있다."
+        - 최대 100자 이내로 작성할 것
+        
+            장면:"""
+        
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "웹툰의 한 장면을 2-3문장으로 간단히 요약해주세요. 시각적 요소와 감정을 중심으로 설명하세요."},
-                    {"role": "user", "content": description}
-                ],
-                temperature=0.7,
-                max_tokens=150
-            )
-            return response.choices[0].message.content.strip()
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": description}
+            ],
+                 temperature=0.7,
+                max_tokens=100
+        )
+        
+            summary = response.choices[0].message.content.strip()
+        # 마침표로 끝나는 경우 마침표 제거
+            summary = summary.rstrip('.')
+        # 50자로 제한
+            return summary[:150]
         except Exception as e:
             logging.error(f"Scene summarization failed: {str(e)}")
-            return description.split("\n")[0]
+            return description.split('\n')[0][:150]
 
     def render_ui(self):
         """Streamlit UI 렌더링"""
@@ -388,7 +401,8 @@ class TextToWebtoonConverter:
                     with col:
                         st.image(image_url, caption=f"컷 {i+1}", use_column_width=True)
                         summary = self.summarize_scene(description)
-                        st.write(summary)
+                        #st.write(summary)
+                        st.markdown(f"<p style='text-align: center; font-size: 14px; margin-top: -10px; margin-bottom: 20px;'>{summary}</p>", unsafe_allow_html=True)
                 progress_bar.progress((len(scenes) + i + 1) / (len(scenes) * 2))
             
             status.success("✨ 웹툰 생성 완료!")

@@ -4,69 +4,58 @@ from dataclasses import dataclass
 from openai import OpenAI
 import logging
 from PIL import Image
-import PyPDF2
-from docx import Document
+
 from io import BytesIO
 from image_gen import generate_image_from_text
+
 @dataclass
 class NonFictionConfig:
     style: str
-    emphasis: str  # "concept", "process", "comparison", "structure"
     complexity: str  # "basic", "intermediate", "advanced"
     visualization_type: str  # "diagram", "illustration", "chart", "symbol"
     aspect_ratio: str
+    num_images: int  # 추가된 필드
+    emphasis: str = "process"  # 기본값 설정 (마지막에 배치)
 
 class NonFictionConverter:
     def __init__(self, openai_client: OpenAI):
         self.client = openai_client
         self.setup_logging()
-        
-        # Style guides for different types of non-fiction content
-        self.style_guides = {
-            "educational": {
-                "prompt": "clear educational illustration, simplified representation, focused on key concepts",
-                "emphasis": "Learning objectives and core concepts"
-            },
-            "scientific": {
-                "prompt": "accurate scientific visualization, precise details, professional appearance",
-                "emphasis": "Scientific accuracy and clarity"
-            },
-            "technical": {
-                "prompt": "technical diagram style, schematic representation, systematic layout",
-                "emphasis": "Technical details and relationships"
-            },
-            "informative": {
-                "prompt": "informative visualization, clear communication, organized layout",
-                "emphasis": "Information hierarchy and flow"
-            }
-        }
-        
-        # Visualization type guides
-        self.visualization_guides = {
-            "diagram": {
-                "prompt": "systematic diagram, clear connections, organized structure",
-                "layout": "structured layout with clear flow"
-            },
-            "illustration": {
-                "prompt": "simplified illustration, essential elements, clear visuals",
-                "layout": "focused composition with key elements"
-            },
-            "chart": {
-                "prompt": "data visualization, clear hierarchy, organized information",
-                "layout": "structured information display"
-            },
-            "symbol": {
-                "prompt": "symbolic representation, abstract concepts, minimal design",
-                "layout": "simplified symbolic elements"
-            }
-        }
 
-        # Negative prompts for non-fiction content
+        self.base_style = {
+            "prompt": "minimal cartoon style, clear and simple design",
+            "background": "clean white background",
+            "colors": "cheerful and clear colors"
+        }
+        
+        self.visualization_types = {
+            "process": {
+                "prompt": "simple step-by-step cartoon",
+                "layout": "easy to follow flow",
+                "elements": "cute arrows, simple numbered steps"
+            },
+            "concept": {
+                "prompt": "friendly explanation cartoon",
+                "layout": "central idea with simple connections",
+                "elements": "cute icons, simple metaphors"
+            },
+            "system": {
+                "prompt": "simple parts explanation",
+                "layout": "clear connections between parts",
+                "elements": "labeled parts with cute symbols"
+            },
+            "comparison": {
+                "prompt": "side by side cartoon comparison",
+                "layout": "clear before/after or vs layout",
+                "elements": "matching cute illustrations"
+            }
+        }
+        
+        # 부정적 요소 단순화
         self.negative_elements = (
-            "narrative elements, emotional expressions, decorative details, "
-            "complex backgrounds, artistic flourishes, unnecessary elements, "
-            "ambiguous symbols, cluttered layout, distracting elements"
-            "undefined character"
+            "complex diagrams, technical symbols, cluttered layout, "
+            "excessive details, scientific notation, complicated backgrounds, "
+            "unnecessary text, too many elements"
         )
 
     @staticmethod
@@ -75,229 +64,292 @@ class NonFictionConverter:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
-
-    def analyze_text_type(self, text: str) -> Dict[str, float]:
-        """Analyze text to determine its type and characteristics"""
+    def split_content_into_scenes(self, text: str, num_scenes: int) -> List[str]:
+        """텍스트를 여러 장면으로 분할"""
         try:
-            prompt = """Analyze this text and determine its characteristics. 
-            Consider:
-            1. Is it educational, scientific, or technical?
-            2. What level of complexity does it have?
-            3. What type of visualization would best represent it?
+            prompt = f"""다음 내용을 {num_scenes}개의 핵심 장면/개념으로 나누어주세요.
+            각 장면은 독립적이면서도 연결되어야 하며, 가능한 한 간단명료해야 합니다.
             
-            Provide scores from 0 to 1 for each category:
-            - Educational value
-            - Scientific content
-            - Technical detail
-            - Abstract concepts
-            - Process description
-            - Data presentation
-
-            Text: {text}"""
+            규칙:
+            1. 각 장면은 아주 쉽게 설명할 수 있어야 합니다
+            2. 마치 어린이에게 설명하듯이 단순화해주세요
+            3. 각 장면은 하나의 명확한 포인트만 가져야 합니다
+            4. 전문용어는 피하고 일상적인 표현을 사용해주세요
+            
+            텍스트:
+            {text}"""
 
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[{"role": "user", "content": prompt.format(text=text)}],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.3
             )
 
-            # Parse the response to get scores
-            analysis = response.choices[0].message.content
-            # Convert the analysis into a structured format
-            # This is a simplified version - you'd need to parse the actual response
-            scores = {
-                "educational": 0.5,
-                "scientific": 0.5,
-                "technical": 0.5,
-                "abstract": 0.5,
-                "process": 0.5,
-                "data": 0.5
-            }
+            scenes = response.choices[0].message.content.strip().split("\n")
+            return [scene.strip() for scene in scenes if scene.strip()][:num_scenes]
+        
+        except Exception as e:
+            logging.error(f"Scene splitting failed: {str(e)}")
+            return [text]  # 실패 시 전체 텍스트를 하나의 장면으로
+   
 
-            return scores
+    def determine_visualization_approach(self, analysis_result: Dict[str, str]) -> Dict[str, str]:
+         # 시각화 스타일 가이드
+        style_guide = {
+        "cartoon": {
+            "prompt": "simple cartoon style, cute and friendly characters, minimal details",
+            "style": "fun and engaging minimal cartoon",
+            "elements": "basic shapes, simple expressions, clear actions"
+        },
+        "minimal": {
+            "prompt": "basic geometric shapes, essential elements only",
+            "style": "clean and simple",
+            "elements": "circles, squares, arrows, basic icons"
+        },
+        "flowchart": {
+            "prompt": "simple flowchart style, clear direction",
+            "style": "step-by-step visual guide",
+            "elements": "connected boxes, directional arrows"
+        },
+        "comparison": {
+            "prompt": "side-by-side comparison, clear differences",
+            "style": "comparative visualization",
+            "elements": "paired illustrations, contrast indicators"
+        }
+    }
+        visual_style = analysis_result.get("visual_style", "minimal")
+        return style_guide.get(visual_style, style_guide["minimal"])
+
+    
+    
+    def analyze_text_type(self, text: str) -> Dict[str, float]:
+        #텍스트 분석을 통해 가장 적합한 시각화 방식 결정"""
+        try:
+            prompt = """다음 텍스트를 읽고, 가장 효과적인 시각화 방식을 추천해주세요:
+
+        1. 이것이 설명하는 것이 무엇인가요?
+        - 과정/단계
+        - 개념/아이디어
+        - 비교/대조
+        - 구조/시스템
+
+        2. 어떻게 표현하면 가장 이해하기 쉬울까요?
+        - 간단한 만화 스타일
+        - 기본 도형으로 표현
+        - 흐름도
+        - 비교 그림
+
+        핵심은 '단순함'과 '명확함'입니다.
+        너무 복잡하거나 과학적인 표현은 피해주세요.
+
+        텍스트: {text}"""
+
+            response = self.client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt.format(text=text)}],
+            temperature=0.3
+        )
+
+        # 간단한 결과 반환
+            return {
+            "content_type": "process",  # process, concept, comparison, system
+            "visual_style": "cartoon"   # cartoon, minimal, flowchart, comparison
+        }
 
         except Exception as e:
             logging.error(f"Text analysis failed: {str(e)}")
             raise
 
-    def determine_visualization_approach(self, analysis_scores: Dict[str, float]) -> Dict[str, str]:
-        """Determine the best visualization approach based on text analysis"""
-        # Find the dominant characteristics
-        max_score = max(analysis_scores.values())
-        dominant_types = [k for k, v in analysis_scores.items() if v == max_score]
-
-        visualization_mapping = {
-            "educational": {"type": "illustration", "style": "educational"},
-            "scientific": {"type": "diagram", "style": "scientific"},
-            "technical": {"type": "chart", "style": "technical"},
-            "abstract": {"type": "symbol", "style": "minimalist"},
-            "process": {"type": "diagram", "style": "systematic"},
-            "data": {"type": "chart", "style": "informative"}
-        }
-
-        # Select the most appropriate visualization approach
-        selected_approach = visualization_mapping.get(dominant_types[0], 
-                                                   {"type": "illustration", "style": "educational"})
-        
-        return selected_approach
-
-    def create_visualization_prompt(self, text: str, config: NonFictionConfig) -> str:
-        """Create a detailed prompt for generating the visualization"""
-        try:
-            # Analyze the text
-            analysis = self.analyze_text_type(text)
-            approach = self.determine_visualization_approach(analysis)
-
-            # Get the appropriate style and visualization guides
-            style_guide = self.style_guides[approach["style"]]
-            vis_guide = self.visualization_guides[approach["type"]]
-
-            # Create the base prompt
-            prompt = f"""Create a clear {approach['type']} visualization:
-
-            Content: {text}
-
-            Style requirements:
-            {style_guide['prompt']}
-            {style_guide['emphasis']}
-
-            Visualization specifications:
-            {vis_guide['prompt']}
-            {vis_guide['layout']}
-
-            Essential elements to include:
-            1. Clear visual hierarchy
-            2. Simplified representations
-            3. Focused information display
-            4. Logical organization
-            5. Essential labels or indicators
-
-            Emphasis level: {config.complexity}
-            Primary focus: {config.emphasis}
-            """
-
-            return prompt
-
-        except Exception as e:
-            logging.error(f"Prompt creation failed: {str(e)}")
-            raise
-
     def render_ui(self):
-        """Streamlit UI for the non-fiction converter"""
-        st.title("비문학 텍스트 시각화")
+       #UI 단순화
+        st.title("쉽게 설명하는 시각화")
 
         with st.form("nonfiction_input_form"):
-            # Text input
             text_content = st.text_area(
-                "텍스트 입력",
-                placeholder="교육적/과학적/기술적 내용을 입력하세요.",
+            "설명하고 싶은 내용을 입력하세요",
+                placeholder="어려운 내용을 쉽게 설명해드릴게요.",
                 height=200
             )
 
             col1, col2 = st.columns(2)
 
             with col1:
-                style = st.selectbox(
-                    "스타일",
-                    ["educational", "scientific", "technical", "informative"]
-                )
-
-                emphasis = st.selectbox(
-                    "강조점",
-                    ["concept", "process", "comparison", "structure"]
-                )
+                visualization_type = st.selectbox(
+                "어떤 방식으로 설명할까요?",
+                ["process", "concept", "system", "comparison"],
+                help="process: 순서대로 설명, concept: 개념 설명, system: 구조 설명, comparison: 비교 설명"
+            )
+            
+                num_images = st.radio(
+                "몇 장의 그림이 필요하신가요?",
+                options=[1, 2, 3, 4],
+                horizontal=True
+            )
 
             with col2:
-                complexity = st.selectbox(
-                    "복잡도",
-                    ["basic", "intermediate", "advanced"]
-                )
-
-                visualization_type = st.selectbox(
-                    "시각화 유형",
-                    ["diagram", "illustration", "chart", "symbol"]
-                )
+                complexity = st.select_slider(
+                "얼마나 자세하게 설명할까요?",
+                    options=["basic", "intermediate", "advanced"],
+                    value="basic"
+            )
 
                 aspect_ratio = st.selectbox(
-                    "이미지 비율",
-                    ["1:1", "16:9", "9:16"]
-                )
+                "이미지 비율",
+                ["1:1", "16:9", "9:16"]
+            )
 
-            submit = st.form_submit_button("시각화 생성")
+        # Submit 버튼을 form 내부로 이동
+            submit = st.form_submit_button("시각화 만들기")
 
             if submit and text_content:
                 config = NonFictionConfig(
-                    style=style,
-                    emphasis=emphasis,
-                    complexity=complexity,
+                    style="cartoon",  # 항상 친근한 만화 스타일 사용
                     visualization_type=visualization_type,
-                    aspect_ratio=aspect_ratio
+                    complexity=complexity,
+                    aspect_ratio=aspect_ratio,
+                    num_images=num_images,
+                    emphasis="clarity"  # 항상 명확성 강조
                 )
-
                 self.process_submission(text_content, config)
 
+    
+    def create_scene_description(self, scene: str, config: NonFictionConfig) -> str:
+      #각 장면에 대한 시각화 프롬프트 생성"""
+        try:
+            vis_type = self.visualization_types[config.visualization_type]
+            
+        # 기본 스타일과 선택된 시각화 타입 결합
+            prompt = f"""Create a simple and friendly cartoon visualization:
+
+            Content to explain: {scene}
+
+            Style:
+            - Simple cartoon style like children's book illustrations
+            - Clean and easy to understand
+            - Use cute and friendly elements
+            - Minimal details, maximum clarity
+
+            Visual approach: {vis_type['prompt']}
+            Layout: {vis_type['layout']}
+            Main elements: {vis_type['elements']}
+
+            Key requirements:
+            - Keep it super simple and friendly
+            - Use basic shapes and cute symbols
+            - Make it instantly understandable
+            - Avoid complex details
+            - Use clear, cheerful colors
+            - Make it engaging and fun
+
+            Complexity: {config.complexity} (but keep it simple regardless)"""
+
+            return prompt
+
+        except Exception as e:
+            logging.error(f"Scene description creation failed: {str(e)}")
+            raise
+
+    def _parse_analysis_response(self, response_text: str) -> Dict[str, float]:
+    #"""분석 응답을 파싱하여 점수로 변환"""
+         try:
+        # 간단한 파싱 로직 구현
+            scores = {
+            "process": 0.5,
+            "concept": 0.5,
+            "system": 0.5,
+            "comparison": 0.5
+        }
+            return scores
+         except Exception as e:
+            logging.error(f"Analysis parsing failed: {str(e)}")
+            return {"process": 0.5, "concept": 0.5, "system": 0.5, "comparison": 0.5}
+
     def process_submission(self, text: str, config: NonFictionConfig):
-    #Process the submission and generate visualization"""
+    #"""여러 장의 이미지 생성 및 처리"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
 
-        # 1. Analyze text and create prompt
-            status.info("📝 텍스트 분석 중...")
-            prompt = self.create_visualization_prompt(text, config)
-            progress_bar.progress(0.3)
+        # 1. 텍스트를 여러 장면으로 분할
+            status.info("📝 내용 분석 중...")
+            scenes = self.split_content_into_scenes(text, config.num_images)
+            progress_bar.progress(0.2)
 
-        # 2. Generate visualization
-            status.info("🎨 시각화 생성 중...")
-        
-        # Import image generation function
-         
-        
-        # Create negative prompt specific to non-fiction content
-            negative_prompt = """
-            narrative elements, emotional expressions, decorative details,
-            complex backgrounds, artistic flourishes, unnecessary elements,
-            ambiguous symbols, cluttered layout, distracting elements,
-            unrealistic proportions, text in image, blurry details
-             """
-        
-        # Generate image
-            image_url, revised_prompt, created_seed = generate_image_from_text(
-                prompt=prompt,
-                style=config.style,
-                aspect_ratio=config.aspect_ratio,
-                negative_prompt=negative_prompt
+        # 2. 각 장면별 처리
+            generated_images = []
+            for i, scene in enumerate(scenes):
+                status.info(f"🎨 {i+1}/{len(scenes)} 이미지 생성 중...")
+            
+            # 장면별 프롬프트 생성
+                prompt = self.create_scene_description(scene, config)
+            
+            # 이미지 생성
+                image_url, revised_prompt, _ = generate_image_from_text(
+                    prompt=prompt,
+                    style="minimalist",  # 항상 미니멀 스타일 사용
+                    aspect_ratio=config.aspect_ratio,
+                    negative_prompt=self.negative_elements
             )
-        
-            if image_url:
-            # Display the generated image
-                st.subheader("생성된 시각화")
-                st.image(image_url, use_column_width=True)
             
-            # Store results in session state for the results page
-                st.session_state.visualization_result = image_url
-                st.session_state.visualization_metadata = {
-                    "original_prompt": prompt,
-                    "revised_prompt": revised_prompt,
-                    "style": config.style,
-                    "emphasis": config.emphasis,
-                    "complexity": config.complexity,
-                    "visualization_type": config.visualization_type
-                }
+                if image_url:
+                # imported summarize_scene 함수 사용
+                    summary = self.summarize_scene(scene)  # 자체 메소드 대신 imported 함수 사용
+                    generated_images.append({
+                    "url": image_url,
+                    "summary": summary,
+                    "prompt": prompt,
+                    "revised_prompt": revised_prompt
+                })
             
-            # Display prompt information in expandable section
-                with st.expander("프롬프트 정보 보기"):
-                    st.text_area("Original Prompt", prompt, height=100)
-                    if revised_prompt:
-                        st.text_area("Revised Prompt", revised_prompt, height=100)
-        
+                progress_bar.progress((i + 1) / len(scenes))
+
+        # 3. 결과 표시
+            if generated_images:
+                cols = st.columns(min(2, len(generated_images)))
+                for i, img_data in enumerate(generated_images):
+                    with cols[i % 2]:
+                        st.image(img_data["url"], use_column_width=True)
+                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{img_data['summary']}</p>", 
+                              unsafe_allow_html=True)
+                    
+                        with st.expander(f"이미지 {i+1} 상세 정보"):
+                            st.text(f"사용된 프롬프트:\n{img_data['prompt']}")
+                            if img_data['revised_prompt']:
+                                st.text(f"수정된 프롬프트:\n{img_data['revised_prompt']}")
+
             progress_bar.progress(1.0)
             status.success("✨ 시각화 생성 완료!")
 
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")
-
+    def summarize_scene(self, description: str) -> str:
+   # """장면 설명 요약"""
+        try:
+            prompt = """다음 시각화 내용을 간단히 설명해주세요:
+        1. 한 문장으로 작성
+        2. 객관적인 설명 위주
+        3. 핵심 요소만 포함
+        4. 최대 50자 이내
+        
+            설명할 내용:"""
+        
+            response = self.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": description}
+            ],
+            temperature=0.7,
+            max_tokens=100
+            )
+        
+            summary = response.choices[0].message.content.strip()
+            return summary[:100]  # 50자로 제한
+        
+        except Exception as e:
+            logging.error(f"Scene summarization failed: {str(e)}")
+            return description[:100]                
 # The main function would be similar to your existing code
 def main():
     st.set_page_config(

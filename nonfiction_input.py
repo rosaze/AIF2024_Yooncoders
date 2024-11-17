@@ -162,7 +162,7 @@ class NonFictionConverter:
 
     def render_ui(self):
        #UI 단순화
-        st.title("쉽게 설명하는 시각화")
+        st.title("교육 콘텐츠로 웹툰화")
 
         with st.form("nonfiction_input_form"):
             text_content = st.text_area(
@@ -188,7 +188,7 @@ class NonFictionConverter:
 
             with col2:
                 complexity = st.select_slider(
-                "얼마나 자세하게 설명할까요?",
+                "이미지의 자세함 설정 ",
                     options=["basic", "intermediate", "advanced"],
                     value="basic"
             )
@@ -199,7 +199,7 @@ class NonFictionConverter:
             )
 
         # Submit 버튼을 form 내부로 이동
-            submit = st.form_submit_button("시각화 만들기")
+            submit = st.form_submit_button("웹툰 생성 시작 ")
 
             if submit and text_content:
                 config = NonFictionConfig(
@@ -318,7 +318,7 @@ class NonFictionConverter:
                                 st.text(f"수정된 프롬프트:\n{img_data['revised_prompt']}")
 
             progress_bar.progress(1.0)
-            status.success("✨ 시각화 생성 완료!")
+            status.success("✨ 시각화된 웹툰 생성 완료!")
 
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")

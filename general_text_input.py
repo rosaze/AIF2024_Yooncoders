@@ -179,26 +179,26 @@ class TextToWebtoonConverter:
         }
         return sizes.get(aspect_ratio, "1024x1024")
     def create_scene_description(self, scene: str, config: SceneConfig) -> str:
-        """장면별 상세 시각적 설명 생성"""
+    ###"""장면별 상세 시각적 설명 생성"""
         try:
             style_guide = self.style_guides[config.style]
             mood_guide = self.mood_guides[config.mood]
-            
+        
             prompt = f"""웹툰 작화 지침:
             장면: {scene}
-            
+        
             스타일 요구사항:
             {style_guide['prompt']}
             {style_guide['emphasis']}
-            
+        
             분위기 요구사항:
             {mood_guide['prompt']}
             조명: {mood_guide['lighting']}
             색감: {mood_guide['color']}
-            
+        
             구도: {self.composition_guides[config.composition]}
             캐릭터 특징: {config.character_desc if config.character_desc else '특별한 지정 없음'}
-            
+        
             다음 요소들을 상세히 설명해주세요:
             1. 화면 구도와 시점
             2. 캐릭터의 위치, 포즈, 표정
@@ -211,12 +211,12 @@ class TextToWebtoonConverter:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
-            messages=messages
-            st.text_area("Request Messages", value=f"{messages}", height=200)
+        
             return response.choices[0].message.content.strip()
         except Exception as e:
             logging.error(f"Scene description creation failed: {str(e)}")
             raise
+
 
     def generate_image(self, description: str, config: SceneConfig) -> str:
         #DALL-E를 사용한 이미지 생성"""

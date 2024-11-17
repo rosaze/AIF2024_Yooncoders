@@ -42,7 +42,7 @@ def navigate_to(page):
     st.session_state.page = page
 
 # 사이드바 네비게이션 - 새로운 옵션 추가
-st.sidebar.title("콘텐츠 생성기")
+st.sidebar.title("Webtoonizer")
 st.sidebar.markdown("""
 ### 원하는 방식을 선택하세요:
 1. 일반 텍스트로 웹툰 만들기

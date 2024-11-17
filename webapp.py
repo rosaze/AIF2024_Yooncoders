@@ -5,12 +5,15 @@ import os
 from openai import OpenAI
 import requests
 from dotenv import load_dotenv
+from clip_analyzer import CLIPAnalyzer
+
+
 
 # 각 기능별 모듈 import
 from article_org import extract_news_info, simplify_terms_dynamically, generate_webtoon_scenes
 from user_input import render_news_search, search_news, generate_final_prompt
-from image_gen import generate_image_from_text, download_and_display_image
-from general_text_input import render_general_text_input
+
+from general_text_input import TextToWebtoonConverter
 
 # .env 파일 로드
 load_dotenv()
@@ -62,9 +65,14 @@ elif tabs == "뉴스 검색":
 if st.sidebar.button("생성된 결과 보기"):
     st.session_state.page = "final_result"
 
-# 페이지 렌더링
+# render_general_text_input() 함수를 다음으로 대체
 if st.session_state.page == "text_input":
-    render_general_text_input()
+    try:
+        clip_analyzer = CLIPAnalyzer()
+        converter = TextToWebtoonConverter(client, clip_analyzer)
+        converter.render_ui()
+    except Exception as e:
+        st.error(f"텍스트 입력 처리 중 오류 발생: {str(e)}")
 
 elif st.session_state.page == "news_search":
     render_news_search()

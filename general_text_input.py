@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
+from datetime import datetime
 from PIL import Image
 import logging
 from openai import OpenAI
@@ -261,45 +262,122 @@ class TextToWebtoonConverter:
 
 
     def generate_image(self, description: str, config: SceneConfig) -> str:
-        #DALL-E를 사용한 이미지 생성"""
-        try:
-            style_guide = self.style_guides[config.style]
-            mood_guide = self.mood_guides[config.mood]
-        
-            final_prompt = f"""{description}
-            Visual style: {style_guide['prompt']}
-            Mood: {mood_guide['prompt']}
-            Lighting: {mood_guide['lighting']}
-            Color: {mood_guide['color']}"""
+        # 최대 시도 횟수 제한
+        max_attempts = 3  
+        min_acceptable_score = 0.6  # 최소 허용 점수
 
-        # 부정적 프롬프트
-            negative_prompt = """
-            추상적인 이미지, 흐릿한 이미지, 낮은 품질, 비현실적인 비율, 
-            왜곡된 얼굴, 추가 사지, 이미지 안 텍스트, 말풍선, 5명 이상의 인물, 국기 또는 나라, 
-            잘린 이미지, 과도한 필터, 비문법적 구조, 중복된 특징, 
-            나쁜 해부학, 나쁜 손, 과도하게 복잡한 배경
-        """
-
-        # image_gen.py의 함수 사용
-            image_url, revised_prompt, created_seed = generate_image_from_text(
-                prompt=final_prompt,
-                style=config.style,
-                aspect_ratio=config.aspect_ratio,
-                negative_prompt=negative_prompt
-        )
-        
-            if image_url:
-                quality_check = self.clip_analyzer.validate_image(image_url, description)
-            
-                if quality_check["similarity_score"] >= 0.7:
-                    return image_url
-                else:
-                    logging.warning(f"Image quality check failed: {quality_check['suggestions']}")
-                    return image_url
+        for attempt in range(max_attempts):
+            try:
+                style_guide = self.style_guides[config.style]
+                mood_guide = self.mood_guides[config.mood]
                 
+                final_prompt = f"""{description}
+                Visual style: {style_guide['prompt']}
+                Mood: {mood_guide['prompt']}
+                Lighting: {mood_guide['lighting']}
+                Color: {mood_guide['color']}"""
+
+                # 부정적 프롬프트
+                negative_prompt = """
+                추상적인 이미지, 흐릿한 이미지, 낮은 품질, 비현실적인 비율, 
+                왜곡된 얼굴, 추가 사지, 이미지 안 텍스트, 말풍선, 5명 이상의 인물, 국기 또는 나라, 
+                잘린 이미지, 과도한 필터, 비문법적 구조, 중복된 특징, 
+                나쁜 해부학, 나쁜 손, 과도하게 복잡한 배경
+                """
+
+                # image_gen.py의 함수 사용
+                image_url, revised_prompt, created_seed = generate_image_from_text(
+                    prompt=final_prompt,
+                    style=config.style,
+                    aspect_ratio=config.aspect_ratio,
+                    negative_prompt=negative_prompt
+                )
+                
+                if image_url:
+                    quality_check = self.clip_analyzer.validate_image(
+                        image_url, 
+                        description,
+                        return_score=True
+                    )
+                    
+                    score = quality_check.get("similarity_score", 0.0)
+                    self._record_attempt(attempt, image_url, score)
+                    
+                    # 점수에 따른 조건부 수락
+                    if score >= 0.7:  # target_score_threshold
+                        logging.info(f"이상적인 이미지 생성 (점수: {score})")
+                        return image_url
+                    elif score >= min_acceptable_score and attempt >= 1:
+                        logging.info(f"적정 수준의 이미지 생성 (점수: {score})")
+                        return image_url
+                    
+                    # 프롬프트 개선은 1회만 시도
+                    if attempt == 0 and score < min_acceptable_score:
+                        description = self._enhance_prompt_with_missing_elements(
+                            description,
+                            quality_check.get("missing_elements", [])
+                        )
+                        logging.info("프롬프트 개선 시도")
+                    
+            except Exception as e:
+                logging.error(f"이미지 생성 시도 {attempt + 1} 실패: {str(e)}")
+                if attempt == max_attempts - 1:
+                    best_result = self._get_best_attempt()
+                    if best_result:
+                        return best_result
+                    
+        return None
+
+    def _record_attempt(self, attempt_num: int, image_url: str, score: float):
+        """각 시도의 결과를 기록"""
+        if not hasattr(self, '_generation_attempts'):
+            self._generation_attempts = []
+        
+        self._generation_attempts.append({
+            'attempt': attempt_num,
+            'image_url': image_url,
+            'score': score,
+            'timestamp': datetime.now()
+        })
+
+    def _get_best_attempt(self) -> str:
+        """지금까지의 시도 중 최상의 결과 반환"""
+        if not hasattr(self, '_generation_attempts') or not self._generation_attempts:
+            return None
+            
+        best_attempt = max(self._generation_attempts, key=lambda x: x['score'])
+        logging.info(f"최선의 시도 선택 (점수: {best_attempt['score']})")
+        return best_attempt['image_url']
+
+    def _enhance_prompt_with_missing_elements(self, original_prompt: str, missing_elements: list) -> str:
+        """프롬프트 개선"""
+        try:
+            enhancement = f"""
+            필수 포함 요소:
+            - 캐릭터 특징: {', '.join(missing_elements) if missing_elements else '기존 유지'}
+            - 스토리 상황: {original_prompt}
+            
+            위 요소들을 자연스럽게 통합하여 더 구체적으로 수정해주세요.
+            특히 캐릭터의 행동과 감정 표현에 중점을 두어주세요.
+            """
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",  # 빠른 응답을 위해 GPT-3.5 사용
+                messages=[
+                    {"role": "system", "content": enhancement},
+                    {"role": "user", "content": original_prompt}
+                ],
+                max_tokens=200,
+                temperature=0.7
+            )
+            
+            enhanced_prompt = response.choices[0].message.content.strip()
+            logging.info("프롬프트 개선 완료")
+            return enhanced_prompt
+            
         except Exception as e:
-            logging.error(f"Image generation failed: {str(e)}")
-            raise
+            logging.error(f"프롬프트 개선 실패: {str(e)}")
+            return original_prompt
 
     def summarize_scene(self, description: str) -> str:
         #장면 설명 요약"""

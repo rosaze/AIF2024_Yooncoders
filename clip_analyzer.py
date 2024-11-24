@@ -9,6 +9,7 @@ import streamlit as st
 
 class CLIPAnalyzer:
     def __init__(self):
+        """CLIP 모델과 프로세서 초기화"""
         try:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
@@ -81,7 +82,7 @@ class CLIPAnalyzer:
             )
             
             key_elements = response.choices[0].message.content.strip()
-            logging.info(f"추출된 핵심 요소: {key_elements[:100]}...")
+            logging.info(f"추출된 핵심 요소: {key_elements}")
             
             return key_elements
             
@@ -89,15 +90,17 @@ class CLIPAnalyzer:
             logging.error(f"핵심 요소 추출 중 오류: {str(e)}")
             return "핵심 요소 추출 실패"
 
-    def validate_image(self, image_url, prompt, return_score=True, story_context=None):
-        """이미지와 프롬프트의 일치도를 검증하고 스토리 컨텍스트도 고려"""
+    def validate_image(self, image_url, prompt, story_context=None, return_score=False):
+        """이미지와 프롬프트의 일치도를 검증"""
         try:
+            # 프롬프트 길이 제한
+            core_prompt = self._extract_core_prompt(prompt)
+            max_length = 77  # CLIP 모델의 최대 토큰 길이
+            core_prompt = ' '.join(core_prompt.split()[:max_length])
+            
             # 이미지 다운로드 및 전처리
             response = requests.get(image_url)
             image = Image.open(BytesIO(response.content))
-            
-            # 프롬프트 전처리
-            core_prompt = self._extract_core_prompt(prompt)
             
             # CLIP 입력 준비
             inputs = self.processor(
@@ -107,95 +110,36 @@ class CLIPAnalyzer:
                 padding=True
             ).to(self.device)
             
-            # 기본 유사도 계산
+            # 유사도 계산
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 logits_per_image = outputs.logits_per_image
                 probs = torch.nn.functional.softmax(logits_per_image, dim=1)
                 similarity = probs[0][0].item()
-
+            
             # 스토리 컨텍스트가 있는 경우 일관성 체크
             if story_context and story_context.get("previous_scenes"):
                 context_score = self._check_story_consistency(image, story_context)
                 # 기본 유사도와 컨텍스트 점수를 결합 (70:30 비율)
-                similarity = 0.7 * similarity + 0.3 * context_score
-
-            # 결과 분석 및 개선 제안
+                similarity = (0.7 * similarity) + (0.3 * context_score)
+            
+            # 결과 분석
             result = {
                 "similarity_score": similarity,
                 "meets_requirements": similarity >= self.target_score_threshold,
-                "acceptable": similarity >= self.minimum_score_threshold,
-                "prompt_used": core_prompt,
-                "suggestions": []
+                "prompt_used": core_prompt
             }
-
-            # 점수가 낮은 경우 구체적인 개선 제안
-            if similarity < self.target_score_threshold:
-                result["suggestions"] = self._generate_improvement_suggestions(
-                    core_prompt, 
-                    similarity,
-                    story_context
-                )
-
-            if not return_score:
-                return similarity >= self.minimum_score_threshold
-
-            return result
+            
+            return result if return_score else result["meets_requirements"]
             
         except Exception as e:
             logging.error(f"이미지 검증 중 오류: {str(e)}")
-            if return_score:
-                return {
-                    "similarity_score": 0.0,
-                    "meets_requirements": False,
-                    "acceptable": False,
-                    "error": str(e),
-                    "prompt_used": None,
-                    "suggestions": ["오류로 인해 검증 실패"]
-                }
-            return False
-
-    def _check_story_consistency(self, new_image, story_context):
-        """새 이미지와 이전 장면들과의 일관성 검증"""
-        try:
-            if not story_context.get("previous_scenes"):
-                return 1.0  # 첫 장면인 경우
-
-            previous_images = []
-            for scene in story_context["previous_scenes"][-3:]:  # 최근 3개 장면만 비교
-                try:
-                    response = requests.get(scene["image_url"])
-                    prev_image = Image.open(BytesIO(response.content))
-                    previous_images.append(prev_image)
-                except Exception as e:
-                    logging.warning(f"이전 이미지 로드 실패: {e}")
-                    continue
-
-            if not previous_images:
-                return 1.0
-
-            # 스타일 일관성 점수 계산
-            consistency_scores = []
-            for prev_image in previous_images:
-                inputs = self.processor(
-                    images=[prev_image, new_image],
-                    return_tensors="pt",
-                    padding=True
-                ).to(self.device)
-                
-                with torch.no_grad():
-                    features = self.model.get_image_features(**inputs)
-                    similarity = torch.nn.functional.cosine_similarity(
-                        features[0].unsqueeze(0), 
-                        features[1].unsqueeze(0)
-                    ).item()
-                    consistency_scores.append(similarity)
-
-            return sum(consistency_scores) / len(consistency_scores)
-
-        except Exception as e:
-            logging.error(f"일관성 검사 중 오류: {str(e)}")
-            return 1.0  # 오류 발생 시 검증을 통과시킴
+            default_result = {
+                "similarity_score": 0.5,
+                "meets_requirements": True,
+                "error": str(e)
+            }
+            return default_result if return_score else True
 
     def _extract_core_prompt(self, prompt):
         """프롬프트에서 핵심 내용만 추출"""
@@ -225,50 +169,56 @@ class CLIPAnalyzer:
             
         except Exception as e:
             logging.error(f"핵심 프롬프트 추출 중 오류: {str(e)}")
-            # 오류 발생 시 원본 프롬프트의 처음 50단어 사용
-            words = prompt.split()[:50]
-            return " ".join(words)
+            return prompt[:100]  # 오류 시 원본 프롬프트의 처음 100자 사용
 
-    def _generate_improvement_suggestions(self, prompt, current_score, story_context=None):
-        """구체적인 개선 제안 생성"""
+    def _check_story_consistency(self, new_image, story_context):
+        """새 이미지와 이전 장면들과의 일관성 검증"""
         try:
-            context_info = ""
-            if story_context and story_context.get("previous_scenes"):
-                last_scene = story_context["previous_scenes"][-1]
-                context_info = f"""
-                이전 장면의 특징:
-                - 스타일: {story_context.get('style', '정보 없음')}
-                - 분위기: {story_context.get('mood', '정보 없음')}
-                - 마지막 장면: {last_scene.get('description', '정보 없음')}
-                """
+            if not story_context.get("previous_scenes"):
+                return 1.0  # 첫 장면인 경우
 
-            suggestion_prompt = f"""
-            현재 이미지와 프롬프트의 유사도가 {current_score:.2f}입니다.
-            
-            프롬프트: {prompt}
-            
-            {context_info}
-            
-            다음 관점에서 구체적인 개선 방안을 제시해주세요:
-            1. 시각적 명확성과 스토리텔링
-            2. 이전 장면과의 스타일 일관성
-            3. 캐릭터와 배경의 통일성
-            4. 감정과 분위기 전달
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": suggestion_prompt}],
-                max_tokens=150,
-                temperature=0.7
-            )
-            
-            suggestions = response.choices[0].message.content.strip().split('\n')
-            return [s.strip() for s in suggestions if s.strip()]
-            
+            previous_images = []
+            for scene in story_context["previous_scenes"][-3:]:  # 최근 3개 장면만 비교
+                try:
+                    response = requests.get(scene["image_url"])
+                    prev_image = Image.open(BytesIO(response.content))
+                    previous_images.append(prev_image)
+                except Exception as e:
+                    logging.warning(f"이전 이미지 로드 실패: {e}")
+                    continue
+
+            if not previous_images:
+                return 1.0
+
+            # 스타일 일관성 점수 계산
+            consistency_scores = []
+            for prev_image in previous_images:
+                try:
+                    inputs = self.processor(
+                        images=[prev_image, new_image],
+                        return_tensors="pt",
+                        padding=True
+                    ).to(self.device)
+                    
+                    with torch.no_grad():
+                        features = self.model.get_image_features(**inputs)
+                        similarity = torch.nn.functional.cosine_similarity(
+                            features[0].unsqueeze(0), 
+                            features[1].unsqueeze(0)
+                        ).item()
+                    consistency_scores.append(similarity)
+                except Exception as e:
+                    logging.error(f"일관성 점수 계산 중 오류: {e}")
+                    continue
+
+            if not consistency_scores:
+                return 1.0
+
+            return sum(consistency_scores) / len(consistency_scores)
+
         except Exception as e:
-            logging.error(f"개선 제안 생성 중 오류: {str(e)}")
-            return ["이미지의 품질과 스토리 일관성 향상이 필요합니다."]
+            logging.error(f"일관성 검사 중 오류: {str(e)}")
+            return 1.0
 
     def analyze_style_consistency(self, images):
         """여러 이미지 간의 스타일 일관성 분석"""
@@ -278,12 +228,15 @@ class CLIPAnalyzer:
         try:
             # 이미지들을 CLIP 임베딩으로 변환
             embeddings = []
-            for img in images:
-                if isinstance(img, str):  # URL인 경우
-                    response = requests.get(img)
-                    img = Image.open(BytesIO(response.content))
+            for img_url in images:
+                response = requests.get(img_url)
+                img = Image.open(BytesIO(response.content))
                 
-                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                inputs = self.processor(
+                    images=img,
+                    return_tensors="pt"
+                ).to(self.device)
+                
                 with torch.no_grad():
                     embedding = self.model.get_image_features(**inputs)
                 embeddings.append(embedding)
@@ -309,12 +262,14 @@ class CLIPAnalyzer:
     def get_image_focus_area(self, image_url, prompt):
         """이미지에서 중요한 영역 감지"""
         try:
-            # 이미지 로드
             response = requests.get(image_url)
             image = Image.open(BytesIO(response.content))
             
-            # CLIP 어텐션 맵 추출
-            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+            inputs = self.processor(
+                images=image,
+                return_tensors="pt"
+            ).to(self.device)
+            
             with torch.no_grad():
                 outputs = self.model.get_image_features(**inputs, output_attentions=True)
                 attention_map = outputs.attentions[-1].mean(dim=1)

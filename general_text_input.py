@@ -169,6 +169,48 @@ class TextToWebtoonConverter:
             logging.error(f"Scene analysis failed: {str(e)}")
             raise
 
+    def analyze_story_by_cuts(self, text: str, cut_count: int) -> Dict[str, str]:
+        """컷 수에 따른 스토리 분석"""
+        try:
+            scene_types = {
+                1: ["핵심 장면"],
+                2: ["도입부", "절정"],
+                3: ["시작", "전개", "결말"],
+                4: ["기(起)", "승(承)", "전(轉)", "결(結)"]
+            }
+            
+            prompt = f"""다음 이야기를 {cut_count}개의 핵심 장면으로 나누어 분석해주세요.
+            각 장면은 다음 구조에 맞춰 선택해주세요:
+            {scene_types[cut_count]}
+            
+            각 장면은 다음 요소를 포함해야 합니다:
+            - 구체적인 공간감과 배경 묘사
+            - 캐릭터의 동작과 표정
+            - 조명과 분위기
+            - 시각적 포인트
+            - 앞뒤 장면과의 연결성
+
+            텍스트:
+            {text}"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+            
+            scenes = {}
+            raw_scenes = response.choices[0].message.content.strip().split("\n\n")
+            
+            for scene_type, scene in zip(scene_types[cut_count], raw_scenes):
+                scenes[scene_type] = scene
+            
+            return scenes
+            
+        except Exception as e:
+            logging.error(f"Scene analysis failed: {str(e)}")
+            raise
+
     @staticmethod
     def get_image_size(aspect_ratio: str) -> str:
         """이미지 크기 결정"""
@@ -271,7 +313,7 @@ class TextToWebtoonConverter:
             장면:"""
         
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4",
                 messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": description}
@@ -371,39 +413,65 @@ class TextToWebtoonConverter:
                     st.warning("텍스트를 입력하거나 파일을 업로드해주세요!")
 
     def process_submission(self, text: str, config: SceneConfig, cut_count: int):
-        """폼 제출 처리 및 이미지 생성"""
+        """유연한 컷 수에 따른 만화 생성 및 CLIP 검증"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
             
-            # 1. 장면 분석
-            status.info("📖 텍스트 분석 중...")
-            scenes = self.analyze_text(text, cut_count)
+            # 1. 선택된 컷 수에 따른 장면 분석
+            status.info("📖 스토리 구조 분석 중...")
+            scenes = self.analyze_story_by_cuts(text, cut_count)
             
-            # 2. 장면별 설명 생성
-            status.info("🎨 장면 설명 생성 중...")
-            scene_descriptions = []
-            for i, scene in enumerate(scenes):
-                description = self.create_scene_description(scene, config)
-                enhanced_description = self.clip_analyzer.enhance_prompt(
-                    description, config.style, config.mood
-                )
-                scene_descriptions.append(enhanced_description)
-                progress_bar.progress((i + 1) / (len(scenes) * 2))
+            # 2. 그리드 레이아웃 계산
+            cols_per_row = min(cut_count, 2)  # 한 줄에 최대 2개
+            rows_needed = (cut_count + 1) // 2
             
-            # 3. 이미지 생성 및 표시
-            status.info("🎨 이미지 생성 중...")
-            cols = st.columns(min(cut_count, 2))
-            
-            for i, (description, col) in enumerate(zip(scene_descriptions, cols)):
-                image_url = self.generate_image(description, config)
-                if image_url:
-                    with col:
-                        st.image(image_url, caption=f"컷 {i+1}", use_column_width=True)
-                        summary = self.summarize_scene(description)
-                        #st.write(summary)
-                        st.markdown(f"<p style='text-align: center; font-size: 14px; margin-top: -10px; margin-bottom: 20px;'>{summary}</p>", unsafe_allow_html=True)
-                progress_bar.progress((len(scenes) + i + 1) / (len(scenes) * 2))
+            for row in range(rows_needed):
+                cols = st.columns(cols_per_row)
+                start_idx = row * cols_per_row
+                end_idx = min(start_idx + cols_per_row, cut_count)
+                
+                for i in range(start_idx, end_idx):
+                    scene_type, scene = list(scenes.items())[i]
+                    status.info(f"🎨 {scene_type} 장면 생성 중... ({i+1}/{cut_count})")
+                    
+                    # 장면 설명 생성
+                    description = self.create_scene_description(scene, config)
+                    enhanced_description = self.clip_analyzer.enhance_prompt(
+                        description, config.style, config.mood
+                    )
+                    
+                    # 이미지 생성
+                    image_url = self.generate_image(enhanced_description, config)
+                    
+                    if image_url:
+                        # CLIP 검증 수행
+                        quality_check = self.clip_analyzer.validate_image(
+                            image_url, 
+                            description,
+                            return_score=True
+                        )
+                        
+                        with cols[i % cols_per_row]:
+                            # 이미지 표시
+                            st.image(image_url, caption=f"컷 {i+1}: {scene_type}", use_column_width=True)
+                            
+                            # 장면 설명
+                            summary = self.summarize_scene(description)
+                            st.markdown(
+                                f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
+                                unsafe_allow_html=True
+                            )
+                            
+                            # CLIP 점수 표시
+                            score = quality_check.get("similarity_score", 0.0)
+                            st.markdown(
+                                f"<p style='text-align: center; font-size: 14px;'>"
+                                f"CLIP 점수: {score:.3f}</p>",
+                                unsafe_allow_html=True
+                            )
+                    
+                    progress_bar.progress((i + 1) / cut_count)
             
             status.success("✨ 웹툰 생성 완료!")
             

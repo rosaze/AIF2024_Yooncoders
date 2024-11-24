@@ -12,6 +12,8 @@ certifi==2024.8.30
 charset-normalizer==3.4.0
 click==8.1.7
 distro==1.9.0
+docx==0.2.4
+exception==0.1.0
 filelock==3.16.1
 frozenlist==1.5.0
 fsspec==2024.10.0
@@ -26,6 +28,7 @@ Jinja2==3.1.4
 jiter==0.7.0
 jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
+lxml==5.3.0
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2
 mdurl==0.1.2
@@ -45,7 +48,9 @@ pydantic==2.5.2
 pydantic_core==2.14.5
 pydeck==0.9.1
 Pygments==2.18.0
+PyPDF2==3.0.1
 python-dateutil==2.9.0.post0
+python-docx==1.1.2
 python-dotenv==1.0.1
 pytz==2024.2
 PyYAML==6.0.2
@@ -72,5 +77,5 @@ transformers==4.46.2
 typing_extensions==4.12.2
 tzdata==2024.2
 urllib3==2.2.3
+watchdog==6.0.0
 yarl==1.17.1
-# 추가 

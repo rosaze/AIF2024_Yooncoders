@@ -3,6 +3,9 @@ from PIL import Image
 import logging
 from transformers import CLIPProcessor, CLIPModel
 from openai import OpenAI
+import requests
+from io import BytesIO
+import streamlit as st
 
 class CLIPAnalyzer:
     def __init__(self):
@@ -11,28 +14,22 @@ class CLIPAnalyzer:
             self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
             self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
             self.client = OpenAI()
+            self.minimum_score_threshold = 0.5  # 최소 허용 점수
+            self.target_score_threshold = 0.7   # 목표 점수
+            logging.info(f"CLIP Analyzer initialized on device: {self.device}")
             
         except Exception as e:
+            logging.error(f"CLIP 모델 초기화 실패: {str(e)}")
             raise RuntimeError(f"CLIP 모델 초기화 실패: {str(e)}")
 
     def enhance_prompt(self, prompt, style, mood):
-        """
-        프롬프트를 개선하고 시각적 요소를 강화하는 메소드
-        
-        Parameters:
-            prompt (str): 원본 프롬프트
-            style (str): 원하는 스타일
-            mood (str): 원하는 분위기
-        
-        Returns:
-            str: 개선된 프롬프트
-        """
+        """프롬프트를 개선하고 시각적 요소를 강화"""
         try:
-            # 먼저 핵심 요소들 추출
-            key_elements = self.extract_key_elements(prompt)
+            # 핵심 요소 추출
+            key_elements = self._extract_key_elements(prompt)
             
             enhancement_prompt = f"""
-            다음 장면 설명을 개선해주세요:
+            다음 장면 설명을 웹툰 스타일로 개선해주세요:
             1. 핵심 시각적 요소를 유지하면서 더 구체적으로 표현
             2. {style} 스타일과 {mood} 분위기를 자연스럽게 반영
             3. 캐릭터의 감정과 동작을 생생하게 표현
@@ -46,180 +43,310 @@ class CLIPAnalyzer:
             """
             
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",  # 더 빠른 응답을 위해 GPT-3.5 사용
                 messages=[{"role": "user", "content": enhancement_prompt}],
-                max_tokens=300,
+                max_tokens=200,
                 temperature=0.7
             )
             
             enhanced_prompt = response.choices[0].message.content.strip()
             
-            logging.info(f"원본 프롬프트: {prompt[:100]}...")
-            logging.info(f"추출된 핵심 요소: {key_elements}")
-            logging.info(f"개선된 프롬프트: {enhanced_prompt[:100]}...")
+            logging.info(f"원본 프롬프트 길이: {len(prompt)}")
+            logging.info(f"개선된 프롬프트 길이: {len(enhanced_prompt)}")
             
             return enhanced_prompt
             
         except Exception as e:
-            logging.error(f"프롬프트 개선 중 오류 발생: {str(e)}")
+            logging.error(f"프롬프트 개선 중 오류: {str(e)}")
             return prompt
 
-    def extract_key_elements(self, text):
+    def _extract_key_elements(self, text):
         """텍스트에서 핵심적인 시각적 요소들을 추출"""
         try:
-            prompt = f"""
-            다음 장면에서 가장 중요한 시각적 요소들만 추출해주세요.
-            순서대로 중요도를 평가하여 가장 중요한 3-4개의 요소만 선택하세요:
-            1. 캐릭터의 주요 행동과 상호작용
-            2. 캐릭터의 감정과 표정
-            3. 주요 배경 요소
-            4. 전체적인 분위기
-
+            prompt = """
+            이 장면에서 가장 중요한 시각적 요소들만 추출해주세요 (최대 3개):
+            1. 주요 캐릭터의 행동과 표정
+            2. 중요한 배경 요소
+            3. 전체적인 분위기나 조명
+            
             장면:
             {text}
             """
             
             response = self.client.chat.completions.create(
                 model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.3
-            )
-            
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            logging.error(f"핵심 요소 추출 중 오류: {str(e)}")
-            return text
-
-    def summarize_text(self, text):
-        """텍스트의 핵심 시각적 요소를 유지하며 CLIP에 적합하게 요약"""
-        try:
-            # 먼저 핵심 요소 추출
-            key_elements = self.extract_key_elements(text)
-            
-            # 추출된 요소들을 CLIP 형식으로 변환
-            prompt = f"""
-            다음 시각적 요소들을 CLIP이 이해하기 쉽도록 77자 이내의 간단한 문장으로 만들어주세요.
-            - 접속사나 불필요한 수식어는 제거
-            - 행동, 감정, 상황을 명확하게 표현
-            - 구체적인 시각적 디테일 유지
-            - 중요한 순서대로 배치
-
-            핵심 요소들:
-            {key_elements}
-            """
-            
-            response = self.client.chat.completions.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt.format(text=text)}],
                 max_tokens=100,
                 temperature=0.3
             )
             
-            summary = response.choices[0].message.content.strip()
+            key_elements = response.choices[0].message.content.strip()
+            logging.info(f"추출된 핵심 요소: {key_elements[:100]}...")
             
-            # 토큰 수 체크 및 필요시 추가 축소
-            if len(summary) > 77:
-                trim_prompt = f"""
-                다음 설명을 77자 이내로 줄이되, 
-                가장 중요한 행동과 감정 표현을 유지하세요:
-
-                {summary}
-                """
-                
-                response = self.client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": trim_prompt}],
-                    max_tokens=100,
-                    temperature=0.3
-                )
-                summary = response.choices[0].message.content.strip()
-            
-            logging.info(f"원본 텍스트: {text[:100]}...")
-            logging.info(f"추출된 핵심 요소: {key_elements}")
-            logging.info(f"최종 요약: {summary}")
-            return summary
+            return key_elements
             
         except Exception as e:
-            logging.error(f"텍스트 요약 중 오류: {str(e)}")
-            text_truncated = text[:77]  
-            last_period = text_truncated.rfind('.')
-            last_comma = text_truncated.rfind(',')
-            cut_point = max(last_period, last_comma)
-            if cut_point > 30:
-                return text_truncated[:cut_point + 1]
-            return text_truncated
+            logging.error(f"핵심 요소 추출 중 오류: {str(e)}")
+            return "핵심 요소 추출 실패"
 
-    def validate_image(self, image_url, prompt):
-        """이미지와 프롬프트의 일치도를 검증"""
+    def validate_image(self, image_url, prompt, return_score=True, story_context=None):
+        """이미지와 프롬프트의 일치도를 검증하고 스토리 컨텍스트도 고려"""
         try:
-            import requests
-            
-            # 이미지 다운로드
+            # 이미지 다운로드 및 전처리
             response = requests.get(image_url)
-            image = Image.open(requests.get(image_url, stream=True).raw)
+            image = Image.open(BytesIO(response.content))
             
-            # 프롬프트에서 핵심 시각 요소 추출 및 요약
-            key_elements = self.extract_key_elements(prompt)
-            summarized_prompt = self.summarize_text(key_elements)
+            # 프롬프트 전처리
+            core_prompt = self._extract_core_prompt(prompt)
             
-            # 입력 처리
+            # CLIP 입력 준비
             inputs = self.processor(
                 images=image,
-                text=[summarized_prompt],
+                text=[core_prompt],
                 return_tensors="pt",
                 padding=True
             ).to(self.device)
             
-            # 유사도 계산
+            # 기본 유사도 계산
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 logits_per_image = outputs.logits_per_image
                 probs = torch.nn.functional.softmax(logits_per_image, dim=1)
                 similarity = probs[0][0].item()
-            
-            suggestions = []
-            if similarity < 0.7:
-                try:
-                    suggestion_prompt = f"""
-                    이미지와 프롬프트의 유사도가 {similarity:.2f}입니다.
-                    다음 요소들을 기반으로 이미지 생성을 개선할 방법을 제안해주세요:
 
-                    핵심 요소:
-                    {key_elements}
+            # 스토리 컨텍스트가 있는 경우 일관성 체크
+            if story_context and story_context.get("previous_scenes"):
+                context_score = self._check_story_consistency(image, story_context)
+                # 기본 유사도와 컨텍스트 점수를 결합 (70:30 비율)
+                similarity = 0.7 * similarity + 0.3 * context_score
 
-                    현재 요약:
-                    {summarized_prompt}
-
-                    각 요소별로 구체적인 개선 방안을 1-2개 제시해주세요.
-                    """
-                    
-                    response = self.client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[{"role": "user", "content": suggestion_prompt}],
-                        max_tokens=200,
-                        temperature=0.7
-                    )
-                    
-                    suggestions.extend(response.choices[0].message.content.strip().split('\n'))
-                except:
-                    suggestions.append("핵심 시각적 요소들의 표현을 더 구체화해주세요.")
-            
-            return {
+            # 결과 분석 및 개선 제안
+            result = {
                 "similarity_score": similarity,
-                "meets_requirements": similarity >= 0.7,
-                "suggestions": suggestions,
-                "key_elements": key_elements,
-                "summarized_prompt": summarized_prompt
+                "meets_requirements": similarity >= self.target_score_threshold,
+                "acceptable": similarity >= self.minimum_score_threshold,
+                "prompt_used": core_prompt,
+                "suggestions": []
             }
+
+            # 점수가 낮은 경우 구체적인 개선 제안
+            if similarity < self.target_score_threshold:
+                result["suggestions"] = self._generate_improvement_suggestions(
+                    core_prompt, 
+                    similarity,
+                    story_context
+                )
+
+            if not return_score:
+                return similarity >= self.minimum_score_threshold
+
+            return result
             
         except Exception as e:
             logging.error(f"이미지 검증 중 오류: {str(e)}")
-            return {
-                "similarity_score": 0.0,
-                "meets_requirements": False,
-                "suggestions": [f"이미지 검증 실패: {str(e)}"],
-                "key_elements": None,
-                "summarized_prompt": None
-            }
+            if return_score:
+                return {
+                    "similarity_score": 0.0,
+                    "meets_requirements": False,
+                    "acceptable": False,
+                    "error": str(e),
+                    "prompt_used": None,
+                    "suggestions": ["오류로 인해 검증 실패"]
+                }
+            return False
+
+    def _check_story_consistency(self, new_image, story_context):
+        """새 이미지와 이전 장면들과의 일관성 검증"""
+        try:
+            if not story_context.get("previous_scenes"):
+                return 1.0  # 첫 장면인 경우
+
+            previous_images = []
+            for scene in story_context["previous_scenes"][-3:]:  # 최근 3개 장면만 비교
+                try:
+                    response = requests.get(scene["image_url"])
+                    prev_image = Image.open(BytesIO(response.content))
+                    previous_images.append(prev_image)
+                except Exception as e:
+                    logging.warning(f"이전 이미지 로드 실패: {e}")
+                    continue
+
+            if not previous_images:
+                return 1.0
+
+            # 스타일 일관성 점수 계산
+            consistency_scores = []
+            for prev_image in previous_images:
+                inputs = self.processor(
+                    images=[prev_image, new_image],
+                    return_tensors="pt",
+                    padding=True
+                ).to(self.device)
+                
+                with torch.no_grad():
+                    features = self.model.get_image_features(**inputs)
+                    similarity = torch.nn.functional.cosine_similarity(
+                        features[0].unsqueeze(0), 
+                        features[1].unsqueeze(0)
+                    ).item()
+                    consistency_scores.append(similarity)
+
+            return sum(consistency_scores) / len(consistency_scores)
+
+        except Exception as e:
+            logging.error(f"일관성 검사 중 오류: {str(e)}")
+            return 1.0  # 오류 발생 시 검증을 통과시킴
+
+    def _extract_core_prompt(self, prompt):
+        """프롬프트에서 핵심 내용만 추출"""
+        try:
+            system_prompt = """
+            다음 장면 설명에서 가장 핵심적인 시각적 요소만 한 문장으로 추출하세요.
+            - 불필요한 설명 제거
+            - 핵심 행동과 분위기 유지
+            - 간단하고 명확하게
+            최대 50단어로 제한하세요.
+            """
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=50,
+                temperature=0.3
+            )
+            
+            core_prompt = response.choices[0].message.content.strip()
+            logging.info(f"추출된 핵심 프롬프트: {core_prompt}")
+            
+            return core_prompt
+            
+        except Exception as e:
+            logging.error(f"핵심 프롬프트 추출 중 오류: {str(e)}")
+            # 오류 발생 시 원본 프롬프트의 처음 50단어 사용
+            words = prompt.split()[:50]
+            return " ".join(words)
+
+    def _generate_improvement_suggestions(self, prompt, current_score, story_context=None):
+        """구체적인 개선 제안 생성"""
+        try:
+            context_info = ""
+            if story_context and story_context.get("previous_scenes"):
+                last_scene = story_context["previous_scenes"][-1]
+                context_info = f"""
+                이전 장면의 특징:
+                - 스타일: {story_context.get('style', '정보 없음')}
+                - 분위기: {story_context.get('mood', '정보 없음')}
+                - 마지막 장면: {last_scene.get('description', '정보 없음')}
+                """
+
+            suggestion_prompt = f"""
+            현재 이미지와 프롬프트의 유사도가 {current_score:.2f}입니다.
+            
+            프롬프트: {prompt}
+            
+            {context_info}
+            
+            다음 관점에서 구체적인 개선 방안을 제시해주세요:
+            1. 시각적 명확성과 스토리텔링
+            2. 이전 장면과의 스타일 일관성
+            3. 캐릭터와 배경의 통일성
+            4. 감정과 분위기 전달
+            """
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": suggestion_prompt}],
+                max_tokens=150,
+                temperature=0.7
+            )
+            
+            suggestions = response.choices[0].message.content.strip().split('\n')
+            return [s.strip() for s in suggestions if s.strip()]
+            
+        except Exception as e:
+            logging.error(f"개선 제안 생성 중 오류: {str(e)}")
+            return ["이미지의 품질과 스토리 일관성 향상이 필요합니다."]
+
+    def analyze_style_consistency(self, images):
+        """여러 이미지 간의 스타일 일관성 분석"""
+        if len(images) < 2:
+            return True, 1.0
+            
+        try:
+            # 이미지들을 CLIP 임베딩으로 변환
+            embeddings = []
+            for img in images:
+                if isinstance(img, str):  # URL인 경우
+                    response = requests.get(img)
+                    img = Image.open(BytesIO(response.content))
+                
+                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                with torch.no_grad():
+                    embedding = self.model.get_image_features(**inputs)
+                embeddings.append(embedding)
+            
+            # 임베딩 간의 코사인 유사도 계산
+            similarities = []
+            for i in range(len(embeddings)-1):
+                for j in range(i+1, len(embeddings)):
+                    sim = torch.nn.functional.cosine_similarity(
+                        embeddings[i], embeddings[j]
+                    ).item()
+                    similarities.append(sim)
+            
+            # 평균 유사도 계산
+            avg_similarity = sum(similarities) / len(similarities)
+            
+            return avg_similarity >= 0.7, avg_similarity
+            
+        except Exception as e:
+            logging.error(f"스타일 일관성 분석 중 오류: {str(e)}")
+            return False, 0.0
+
+    def get_image_focus_area(self, image_url, prompt):
+        """이미지에서 중요한 영역 감지"""
+        try:
+            # 이미지 로드
+            response = requests.get(image_url)
+            image = Image.open(BytesIO(response.content))
+            
+            # CLIP 어텐션 맵 추출
+            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                outputs = self.model.get_image_features(**inputs, output_attentions=True)
+                attention_map = outputs.attentions[-1].mean(dim=1)
+            
+            return attention_map.cpu().numpy()
+            
+        except Exception as e:
+            logging.error(f"이미지 포커스 영역 분석 중 오류: {str(e)}")
+            return None
+
+    @staticmethod
+    def visualize_results(image_url, clip_score, attention_map=None):
+        """검증 결과 시각화"""
+        try:
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.image(image_url, use_column_width=True)
+                
+            with col2:
+                st.metric("CLIP 유사도", f"{clip_score:.2f}")
+                if clip_score >= 0.7:
+                    st.success("✓ 검증 통과")
+                else:
+                    st.warning("⚠ 개선 필요")
+                
+            if attention_map is not None:
+                st.write("주목 영역:")
+                fig, ax = plt.subplots()
+                sns.heatmap(attention_map, ax=ax)
+                st.pyplot(fig)
+                
+        except Exception as e:
+            logging.error(f"결과 시각화 중 오류: {str(e)}")
+            st.error("결과 시각화 실패")

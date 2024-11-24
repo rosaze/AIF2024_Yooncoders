@@ -24,23 +24,23 @@ class TextToWebtoonConverter:
         self.clip_analyzer = clip_analyzer
         self.setup_logging()
         self.style_guides = {
-            "minimalist": {
+            "미니멀리스트": {
                 "prompt": "minimal details, simple lines, clean composition, essential elements only",
                 "emphasis": "Focus on simplicity and negative space"
             },
-            "pictogram": {
+            "픽토그램": {
                 "prompt": "symbolic representation, simplified shapes, icon-like style",
                 "emphasis": "Clear silhouettes and symbolic elements"
             },
-            "cartoon": {
+            "카툰": {
                 "prompt": "animated style, exaggerated features, bold colors",
                 "emphasis": "Expressive and dynamic elements"
             },
-            "webtoon": {
+            "웹툰": {
                 "prompt": "webtoon style, manhwa art style, clean lines, vibrant colors",
                 "emphasis": "Dramatic angles and clear storytelling"
             },
-            "artistic": {
+            "예술적": {
                 "prompt": "painterly style, artistic interpretation, creative composition",
                 "emphasis": "Atmospheric and textural details"
             }
@@ -333,7 +333,7 @@ class TextToWebtoonConverter:
 
     def render_ui(self):
         """Streamlit UI 렌더링"""
-        st.title("텍스트를 웹툰으로 변환하기")
+        st.title("스토리 텍스트 시각화하기")
         
         input_method = st.radio(
             "입력 방식을 선택하세요",
@@ -369,8 +369,8 @@ class TextToWebtoonConverter:
             with col1:
                 style = st.select_slider(
                     "스타일 선택",
-                    options=["minimalist", "pictogram", "cartoon", "webtoon", "artistic"],
-                    value="webtoon"
+                    options=["미니멀리스트", "픽토그램", "카툰", "웹툰", "예술적"],
+                    value="웹툰"
                 )
                 
                 mood = st.selectbox(
@@ -472,9 +472,27 @@ class TextToWebtoonConverter:
                             )
                     
                     progress_bar.progress((i + 1) / cut_count)
+
             
             status.success("✨ 웹툰 생성 완료!")
-            
+            # 저장 버튼 추가
+            if generated_images:
+                save_config = {
+                    'type': 'story',
+                    'title': text[:100],  # 텍스트 앞부분을 제목으로
+                    'text': text,
+                    'style': config.style,
+                    'composition': config.composition,
+                    'mood': config.mood,
+                    'character_desc': config.character_desc,
+                    'aspect_ratio': config.aspect_ratio,
+                    'cut_count': cut_count,
+                    'scene_descriptions': scene_descriptions
+                }
+                if st.button("💾 이번 과정 저장하기"):
+                    session_dir = save_session(save_config, generated_images)
+                    st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
+
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")

@@ -24,23 +24,23 @@ class TextToWebtoonConverter:
         self.clip_analyzer = clip_analyzer
         self.setup_logging()
         self.style_guides = {
-            "minimalist": {
+            "미니멀리스트": {
                 "prompt": "minimal details, simple lines, clean composition, essential elements only",
                 "emphasis": "Focus on simplicity and negative space"
             },
-            "pictogram": {
+            "픽토그램": {
                 "prompt": "symbolic representation, simplified shapes, icon-like style",
                 "emphasis": "Clear silhouettes and symbolic elements"
             },
-            "cartoon": {
+            "카툰": {
                 "prompt": "animated style, exaggerated features, bold colors",
                 "emphasis": "Expressive and dynamic elements"
             },
-            "webtoon": {
+            "웹툰": {
                 "prompt": "webtoon style, manhwa art style, clean lines, vibrant colors",
                 "emphasis": "Dramatic angles and clear storytelling"
             },
-            "artistic": {
+            "예술적": {
                 "prompt": "painterly style, artistic interpretation, creative composition",
                 "emphasis": "Atmospheric and textural details"
             }
@@ -291,7 +291,7 @@ class TextToWebtoonConverter:
 
     def render_ui(self):
         """Streamlit UI 렌더링"""
-        st.title("텍스트를 웹툰으로 변환하기")
+        st.title("스토리 텍스트 시각화하기")
         
         input_method = st.radio(
             "입력 방식을 선택하세요",
@@ -327,8 +327,8 @@ class TextToWebtoonConverter:
             with col1:
                 style = st.select_slider(
                     "스타일 선택",
-                    options=["minimalist", "pictogram", "cartoon", "webtoon", "artistic"],
-                    value="webtoon"
+                    options=["미니멀리스트", "픽토그램", "카툰", "웹툰", "예술적"],
+                    value="웹툰"
                 )
                 
                 mood = st.selectbox(

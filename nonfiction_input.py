@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 import logging
 from PIL import Image
-
+from general_text_input import TextToWebtoonConverter  # 파일 처리 기능 재사용
 from io import BytesIO
 from image_gen import generate_image_from_text
 
@@ -162,15 +162,34 @@ class NonFictionConverter:
 
     def render_ui(self):
        #UI 단순화
-        st.title("교육 콘텐츠로 웹툰화")
+        st.title("교육/ 과학 텍스트 시각화하기")
+         # 입력 방식 선택
+        input_method = st.radio(
+            "입력 방식을 선택하세요",
+            ["직접 입력", "파일 업로드"],
+            horizontal=True
+        )
 
         with st.form("nonfiction_input_form"):
-            text_content = st.text_area(
-            "설명하고 싶은 내용을 입력하세요",
-                placeholder="어려운 내용을 쉽게 설명해드릴게요.",
-                height=200
-            )
-
+            text_content = None
+            if input_method == "직접 입력":
+                text_content = st.text_area(
+                    "설명하고 싶은 내용을 입력하세요",
+                    placeholder="어려운 내용을 쉽게 설명해드릴게요.",
+                    height=200
+             )
+            else:
+                uploaded_file=st.file_uploader(
+                    "파일 업로드",
+                type=['txt', 'pdf', 'docx', 'doc'],
+                help="지원 형식: TXT, PDF, DOCX"
+                )
+                if uploaded_file:
+                    text_content=TextToWebtoonConverter.read_file_content(uploaded_file)
+                    if text_content:
+                        st.success("파일 업로드 성공!")
+                        with st.expander("파일 내용 확인"):
+                            st.text(text_content[:500] + "..." if len(text_content) > 500 else text_content)
             col1, col2 = st.columns(2)
 
             with col1:
@@ -192,7 +211,6 @@ class NonFictionConverter:
                     options=["basic", "intermediate", "advanced"],
                     value="basic"
             )
-
                 aspect_ratio = st.selectbox(
                 "이미지 비율",
                 ["1:1", "16:9", "9:16"]
@@ -201,17 +219,19 @@ class NonFictionConverter:
         # Submit 버튼을 form 내부로 이동
             submit = st.form_submit_button("웹툰 생성 시작 ")
 
-            if submit and text_content:
-                config = NonFictionConfig(
-                    style="cartoon",  # 항상 친근한 만화 스타일 사용
-                    visualization_type=visualization_type,
-                    complexity=complexity,
-                    aspect_ratio=aspect_ratio,
-                    num_images=num_images,
-                    emphasis="clarity"  # 항상 명확성 강조
-                )
+            if submit:
+                if text_content:
+                    config = NonFictionConfig(
+                        style="cartoon",  # 항상 친근한 만화 스타일 사용
+                        visualization_type=visualization_type,
+                        complexity=complexity,
+                        aspect_ratio=aspect_ratio,
+                        num_images=num_images,
+                        emphasis="clarity"  # 항상 명확성 강조
+                     )
                 self.process_submission(text_content, config)
-
+            else:
+                st.warning("텍스트를 입력하거나 파일을 업로드해주세요!")
     
     def create_scene_description(self, scene: str, config: NonFictionConfig) -> str:
       #각 장면에 대한 시각화 프롬프트 생성"""

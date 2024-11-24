@@ -393,11 +393,13 @@ class TextToWebtoonConverter:
             
             # 3. 이미지 생성 및 표시
             status.info("🎨 이미지 생성 중...")
+            generated_images = {}
             cols = st.columns(min(cut_count, 2))
             
             for i, (description, col) in enumerate(zip(scene_descriptions, cols)):
                 image_url = self.generate_image(description, config)
                 if image_url:
+                    generated_images[i]= image_url
                     with col:
                         st.image(image_url, caption=f"컷 {i+1}", use_column_width=True)
                         summary = self.summarize_scene(description)
@@ -406,7 +408,24 @@ class TextToWebtoonConverter:
                 progress_bar.progress((len(scenes) + i + 1) / (len(scenes) * 2))
             
             status.success("✨ 웹툰 생성 완료!")
-            
+            # 저장 버튼 추가
+            if generated_images:
+                save_config = {
+                    'type': 'story',
+                    'title': text[:100],  # 텍스트 앞부분을 제목으로
+                    'text': text,
+                    'style': config.style,
+                    'composition': config.composition,
+                    'mood': config.mood,
+                    'character_desc': config.character_desc,
+                    'aspect_ratio': config.aspect_ratio,
+                    'cut_count': cut_count,
+                    'scene_descriptions': scene_descriptions
+                }
+                if st.button("💾 이번 과정 저장하기"):
+                    session_dir = save_session(save_config, generated_images)
+                    st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
+
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")

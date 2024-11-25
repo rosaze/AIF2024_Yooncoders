@@ -7,6 +7,7 @@ from PIL import Image
 from general_text_input import TextToWebtoonConverter  # 파일 처리 기능 재사용
 from io import BytesIO
 from image_gen import generate_image_from_text
+from save_utils import save_session
 
 @dataclass
 class NonFictionConfig:
@@ -29,22 +30,22 @@ class NonFictionConverter:
         }
         
         self.visualization_types = {
-            "process": {
+            "프로세스 설명": {
                 "prompt": "simple step-by-step cartoon",
                 "layout": "easy to follow flow",
                 "elements": "cute arrows, simple numbered steps"
             },
-            "concept": {
+            "개념 설명": {
                 "prompt": "friendly explanation cartoon",
                 "layout": "central idea with simple connections",
                 "elements": "cute icons, simple metaphors"
             },
-            "system": {
+            "시스템 설명": {
                 "prompt": "simple parts explanation",
                 "layout": "clear connections between parts",
                 "elements": "labeled parts with cute symbols"
             },
-            "comparison": {
+            "비교 설명": {
                 "prompt": "side by side cartoon comparison",
                 "layout": "clear before/after or vs layout",
                 "elements": "matching cute illustrations"
@@ -152,7 +153,7 @@ class NonFictionConverter:
 
         # 간단한 결과 반환
             return {
-            "content_type": "process",  # process, concept, comparison, system
+            "content_type": "프로세스 설명",  # process, concept, comparison, system
             "visual_style": "cartoon"   # cartoon, minimal, flowchart, comparison
         }
 
@@ -163,6 +164,12 @@ class NonFictionConverter:
     def render_ui(self):
        #UI 단순화
         st.title("교육/ 과학 텍스트 시각화하기")
+        # 세션 상태 초기화
+        if 'generated_images' not in st.session_state:
+            st.session_state.generated_images = {}
+            st.session_state.current_config = None
+            st.session_state.current_text = None
+            st.session_state.scene_descriptions = []
          # 입력 방식 선택
         input_method = st.radio(
             "입력 방식을 선택하세요",
@@ -171,6 +178,7 @@ class NonFictionConverter:
         )
 
         with st.form("nonfiction_input_form"):
+
             text_content = None
             if input_method == "직접 입력":
                 text_content = st.text_area(
@@ -195,8 +203,8 @@ class NonFictionConverter:
             with col1:
                 visualization_type = st.selectbox(
                 "어떤 방식으로 설명할까요?",
-                ["process", "concept", "system", "comparison"],
-                help="process: 순서대로 설명, concept: 개념 설명, system: 구조 설명, comparison: 비교 설명"
+                ["프로세스 설명", "개념 설명", "시스템 설명", "비교 설명"],
+        
             )
             
                 num_images = st.radio(
@@ -208,81 +216,107 @@ class NonFictionConverter:
             with col2:
                 complexity = st.select_slider(
                 "이미지의 자세함 설정 ",
-                    options=["basic", "intermediate", "advanced"],
-                    value="basic"
+                options=["기본", "중간", "상세"],  # "basic", "intermediate", "advanced" 대신
+                value="기본"
             )
                 aspect_ratio = st.selectbox(
                 "이미지 비율",
                 ["1:1", "16:9", "9:16"]
             )
 
-        # Submit 버튼을 form 내부로 이동
-            submit = st.form_submit_button("웹툰 생성 시작 ")
+            # Submit 버튼을 form 내부로 이동
+            submit = st.form_submit_button("✨웹툰 생성 시작 ")
 
-            if submit:
-                if text_content:
-                    config = NonFictionConfig(
-                        style="cartoon",  # 항상 친근한 만화 스타일 사용
+            if submit and text_content:
+                complexity_map = {
+                         "기본": "basic",
+                         "중간": "intermediate",
+                         "상세": "advanced"
+                        }
+                config = NonFictionConfig(
+                        style="minimal",  # 항상 친근한 만화 스타일 사용
                         visualization_type=visualization_type,
-                        complexity=complexity,
+                        complexity=complexity_map[complexity],
                         aspect_ratio=aspect_ratio,
                         num_images=num_images,
                         emphasis="clarity"  # 항상 명확성 강조
                      )
+                 # 세션 상태에 현재 설정 저장
+                st.session_state.current_config = config
+                st.session_state.current_text = text_content
                 self.process_submission(text_content, config)
-            else:
+            elif submit:
                 st.warning("텍스트를 입력하거나 파일을 업로드해주세요!")
-    
+        # form 바깥에서 저장 버튼 처리
+        if st.session_state.generated_images:
+            if st.button("💾 이번 과정 저장하기"):
+                save_config = {
+                'type': 'education',
+                'title': st.session_state.current_text[:100],
+                'text': st.session_state.current_text,
+                'visualization_type': st.session_state.current_config.visualization_type,
+                'complexity': st.session_state.current_config.complexity,
+                'aspect_ratio': st.session_state.current_config.aspect_ratio,
+                'num_images': st.session_state.current_config.num_images,
+                'scene_descriptions': st.session_state.scene_descriptions
+                }
+                session_dir = save_session(save_config, st.session_state.generated_images)
+                
+                st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
     def create_scene_description(self, scene: str, config: NonFictionConfig) -> str:
-      #각 장면에 대한 시각화 프롬프트 생성"""
+    #각 장면에 대한 시각화 프롬프트 생성"""
         try:
-            vis_type = self.visualization_types[config.visualization_type]
-            
-        # 기본 스타일과 선택된 시각화 타입 결합
-            prompt = f"""Create a simple and friendly cartoon visualization:
+            max_length = 200
+            content = scene[:max_length] if len(scene) > max_length else scene
+             # 시각화 타입에 따른 기본 레이아웃 결정
+            layouts = {
+            "프로세스 설명": "horizontal flow diagram with arrows",
+            "개념 설명": "central concept with radiating elements",
+            "시스템 설명": "connected components diagram",
+            "비교 설명": "side by side comparison"
+             }
+        
+            base_prompt = f"""Create an extremely minimal educational diagram:
+                Main idea: {content}
 
-            Content to explain: {scene}
+        Required style:
+    -  Absolutely minimalist design
+    -  Only basic geometric shapes (circles, squares, triangles)
+    - Maximum 3-4 core elements
+    - Simple connecting lines or arrows
+    - No text or labels
+    - Single color scheme
+    - {layouts[config.visualization_type]}
 
-            Style:
-            - Simple cartoon style like children's book illustrations
-            - Clean and easy to understand
-            - Use cute and friendly elements
-            - Minimal details, maximum clarity
-
-            Visual approach: {vis_type['prompt']}
-            Layout: {vis_type['layout']}
-            Main elements: {vis_type['elements']}
-
-            Key requirements:
-            - Keep it super simple and friendly
-            - Use basic shapes and cute symbols
-            - Make it instantly understandable
-            - Avoid complex details
-            - Use clear, cheerful colors
-            - Make it engaging and fun
-
-            Complexity: {config.complexity} (but keep it simple regardless)"""
-
-            return prompt
-
+    Must avoid:
+    - Any text or labels
+    - Complex details
+    - Decorative elements
+    - Multiple colors
+    - Realistic illustrations
+    - Character designs
+    - Backgrounds
+    - Gradients or shadows"""
+            return base_prompt
         except Exception as e:
             logging.error(f"Scene description creation failed: {str(e)}")
             raise
+       
 
     def _parse_analysis_response(self, response_text: str) -> Dict[str, float]:
     #"""분석 응답을 파싱하여 점수로 변환"""
          try:
         # 간단한 파싱 로직 구현
             scores = {
-            "process": 0.5,
-            "concept": 0.5,
-            "system": 0.5,
-            "comparison": 0.5
+            "프로세스 설명": 0.5,
+            "개념 설명": 0.5,
+            "시스템 설명": 0.5,
+            "비교 설명": 0.5
         }
             return scores
          except Exception as e:
             logging.error(f"Analysis parsing failed: {str(e)}")
-            return {"process": 0.5, "concept": 0.5, "system": 0.5, "comparison": 0.5}
+            return {"프로세스 설명": 0.5, "개념 설명": 0.5, "시스템 설명": 0.5, "비교 설명": 0.5}
 
     def process_submission(self, text: str, config: NonFictionConfig):
     #"""여러 장의 이미지 생성 및 처리"""
@@ -296,53 +330,46 @@ class NonFictionConverter:
             progress_bar.progress(0.2)
 
         # 2. 각 장면별 처리
-            generated_images = []
+            generated_images = {}
+            scene_descriptions = []
+
             for i, scene in enumerate(scenes):
                 status.info(f"🎨 {i+1}/{len(scenes)} 이미지 생성 중...")
             
             # 장면별 프롬프트 생성
                 prompt = self.create_scene_description(scene, config)
-            
+                scene_descriptions.append(prompt)
             # 이미지 생성
-                image_url, revised_prompt, _ = generate_image_from_text(
+                image_url, _, _ = generate_image_from_text(
                     prompt=prompt,
                     style="minimalist",  # 항상 미니멀 스타일 사용
                     aspect_ratio=config.aspect_ratio,
-                    negative_prompt=self.negative_elements
+                    negative_prompt="text, labels, details, decorations, complex shapes, multiple colors, gradients, shadows, backgrounds, characters"
             )
-            
                 if image_url:
-                # imported summarize_scene 함수 사용
-                    summary = self.summarize_scene(scene)  # 자체 메소드 대신 imported 함수 사용
-                    generated_images.append({
-                    "url": image_url,
-                    "summary": summary,
-                    "prompt": prompt,
-                    "revised_prompt": revised_prompt
-                })
-            
-                progress_bar.progress((i + 1) / len(scenes))
-
-        # 3. 결과 표시
-            if generated_images:
-                cols = st.columns(min(2, len(generated_images)))
-                for i, img_data in enumerate(generated_images):
-                    with cols[i % 2]:
-                        st.image(img_data["url"], use_column_width=True)
-                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{img_data['summary']}</p>", 
-                              unsafe_allow_html=True)
+                    generated_images[i] = image_url
+                    if i % 2 == 0:
+                        cols = st.columns(min(2, config.num_images - i))
                     
-                        with st.expander(f"이미지 {i+1} 상세 정보"):
-                            st.text(f"사용된 프롬프트:\n{img_data['prompt']}")
-                            if img_data['revised_prompt']:
-                                st.text(f"수정된 프롬프트:\n{img_data['revised_prompt']}")
+                    with cols[i % 2]:
+                        st.image(image_url, use_column_width=True)
+                        summary = self.summarize_scene(scene)
+                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
+                              unsafe_allow_html=True)
+            
+                progress_bar.progress((i + 1) / config.num_images)
 
+                # 세션 상태 업데이트
+            st.session_state.generated_images = generated_images
+            st.session_state.scene_descriptions = scene_descriptions
+        
             progress_bar.progress(1.0)
-            status.success("✨ 시각화된 웹툰 생성 완료!")
+            status.success("✨ 시각화 완료!")
 
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")
+    
     def summarize_scene(self, description: str) -> str:
    # """장면 설명 요약"""
         try:

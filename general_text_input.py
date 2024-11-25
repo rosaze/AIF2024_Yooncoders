@@ -10,6 +10,7 @@ import PyPDF2
 from clip_analyzer import CLIPAnalyzer
 from docx import Document
 from image_gen import generate_image_from_text
+from save_utils import save_session
 @dataclass
 class SceneConfig:
     style: str
@@ -332,22 +333,27 @@ class TextToWebtoonConverter:
             return description.split('\n')[0][:150]
 
     def render_ui(self):
-        """Streamlit UI 렌더링"""
         st.title("스토리 텍스트 시각화하기")
-        
+    
+    # 세션 상태 초기화
+        if 'generated_images' not in st.session_state:
+            st.session_state.generated_images = {}
+            st.session_state.current_config = None
+            st.session_state.current_text = None
+            st.session_state.scene_descriptions = []
+    
         input_method = st.radio(
-            "입력 방식을 선택하세요",
-            ["직접 입력", "파일 업로드"],
-            horizontal=True
+        "입력 방식을 선택하세요",
+        ["직접 입력", "파일 업로드"],
+        horizontal=True
         )
-        
-        text_content = None
-        
+    
         with st.form("story_input_form"):
+            text_content = None
             if input_method == "직접 입력":
                 text_content = st.text_area(
                     "스토리 입력",
-                    placeholder="소설, 뉴스 기사, 또는 자유로운 이야기를 입력해주세요.",
+                    placeholder="소설, 시나리오, 또는 자유로운 이야기를 입력해주세요.",
                     height=200
                 )
             else:
@@ -356,142 +362,164 @@ class TextToWebtoonConverter:
                     type=['txt', 'pdf', 'docx', 'doc'],
                     help="지원 형식: TXT, PDF, DOCX"
                 )
-                
+            
                 if uploaded_file:
                     text_content = self.read_file_content(uploaded_file)
                     if text_content:
                         st.success("파일 업로드 성공!")
                         with st.expander("파일 내용 확인"):
                             st.text(text_content[:500] + "..." if len(text_content) > 500 else text_content)
-                    
+                
             col1, col2 = st.columns(2)
-            
             with col1:
                 style = st.select_slider(
                     "스타일 선택",
                     options=["미니멀리스트", "픽토그램", "카툰", "웹툰", "예술적"],
                     value="웹툰"
                 )
-                
+            
                 mood = st.selectbox(
                     "분위기",
                     ["일상적", "긴장된", "진지한", "따뜻한", "즐거운"]
-                )
-                
+                )   
+            
                 composition = st.selectbox(
                     "구도",
                     ["배경과 인물", "근접 샷", "대화형", "풍경 위주", "일반"]
                 )
-            
+        
             with col2:
                 character_desc = st.text_input(
                     "캐릭터 설명 (선택사항)",
-                    placeholder="주요 캐릭터의 특징을 입력해주세요"
+                 placeholder="주요 캐릭터의 특징을 입력해주세요"
                 )
-                
+            
                 cut_count = st.radio(
-                    "생성할 컷 수",
-                    options=[1, 2, 3, 4],
-                    horizontal=True
+                "생성할 컷 수",
+                options=[1, 2, 3, 4],
+                horizontal=True
                 )
-                
+            
                 aspect_ratio = st.selectbox(
-                    "이미지 비율",
-                    ["1:1", "16:9", "9:16"]
+                "이미지 비율",
+                ["정사각형 (1:1)", "와이드 (16:9)", "세로형 (9:16)"]
+                )
+        
+            submit = st.form_submit_button("✨웹툰 생성 시작")
+        
+            if submit and text_content:
+            # aspect ratio 값 변환
+                ratio_map = {
+                "정사각형 (1:1)": "1:1",
+                "와이드 (16:9)": "16:9",
+                "세로형 (9:16)": "9:16"
+                }
+            
+                config = SceneConfig(
+                    style="미니멀리스트",
+                    composition=composition,
+                    mood=mood,
+                    character_desc=character_desc,
+                    aspect_ratio=ratio_map.get(aspect_ratio, "1:1")
                 )
             
-            submit = st.form_submit_button("웹툰 생성 시작")
-            
-            if submit:
-                if text_content:
-                    self.process_submission(
-                        text_content,
-                        SceneConfig(style, composition, mood, character_desc, aspect_ratio),
-                        cut_count
-                    )
-                else:
-                    st.warning("텍스트를 입력하거나 파일을 업로드해주세요!")
+                # 세션 상태에 현재 설정 저장
+                st.session_state.current_config = config
+                st.session_state.current_text = text_content
+                self.process_submission(text_content, config, cut_count)
 
+        # form 바깥에서 저장 버튼 처리
+        if st.session_state.generated_images:
+            if st.button("💾 이번 과정 저장하기"):
+                save_config = {
+                    'type': 'story',
+                    'title': st.session_state.current_text[:100],
+                    'text': st.session_state.current_text,
+                    'style': st.session_state.current_config.style,
+                    'composition': st.session_state.current_config.composition,
+                    'mood': st.session_state.current_config.mood,
+                    'character_desc': st.session_state.current_config.character_desc,
+                    'aspect_ratio': st.session_state.current_config.aspect_ratio,
+                    'scene_descriptions': st.session_state.scene_descriptions
+                }
+                session_dir = save_session(save_config, st.session_state.generated_images)
+                st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
+
+    
     def process_submission(self, text: str, config: SceneConfig, cut_count: int):
         """유연한 컷 수에 따른 만화 생성 및 CLIP 검증"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
-            
+        
             # 1. 선택된 컷 수에 따른 장면 분석
             status.info("📖 스토리 구조 분석 중...")
             scenes = self.analyze_story_by_cuts(text, cut_count)
-            
-            # 2. 그리드 레이아웃 계산
+        
+            # 2. 결과 저장을 위한 딕셔너리 초기화
+            generated_images = {}
+            scene_descriptions = []
+        
+            # 3. 그리드 레이아웃 계산
             cols_per_row = min(cut_count, 2)  # 한 줄에 최대 2개
             rows_needed = (cut_count + 1) // 2
-            
+        
             for row in range(rows_needed):
                 cols = st.columns(cols_per_row)
                 start_idx = row * cols_per_row
                 end_idx = min(start_idx + cols_per_row, cut_count)
-                
+            
                 for i in range(start_idx, end_idx):
                     scene_type, scene = list(scenes.items())[i]
                     status.info(f"🎨 {scene_type} 장면 생성 중... ({i+1}/{cut_count})")
-                    
+                
                     # 장면 설명 생성
                     description = self.create_scene_description(scene, config)
                     enhanced_description = self.clip_analyzer.enhance_prompt(
                         description, config.style, config.mood
                     )
-                    
+                    scene_descriptions.append(enhanced_description)
+                
                     # 이미지 생성
                     image_url = self.generate_image(enhanced_description, config)
-                    
+                
                     if image_url:
+                        # 생성된 이미지 저장
+                        generated_images[i] = image_url
+                    
                         # CLIP 검증 수행
                         quality_check = self.clip_analyzer.validate_image(
                             image_url, 
                             description,
                             return_score=True
                         )
-                        
+                    
                         with cols[i % cols_per_row]:
                             # 이미지 표시
                             st.image(image_url, caption=f"컷 {i+1}: {scene_type}", use_column_width=True)
-                            
+                        
                             # 장면 설명
                             summary = self.summarize_scene(description)
                             st.markdown(
                                 f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
                                 unsafe_allow_html=True
                             )
-                            
+                        
                             # CLIP 점수 표시
                             score = quality_check.get("similarity_score", 0.0)
                             st.markdown(
-                                f"<p style='text-align: center; font-size: 14px;'>"
-                                f"CLIP 점수: {score:.3f}</p>",
+                                f"<p style='text-align: center; font-size: 12px; color: gray;'>"
+                                f"이미지 품질 점수: {score:.2f}</p>",
                                 unsafe_allow_html=True
                             )
-                    
+                
                     progress_bar.progress((i + 1) / cut_count)
 
-            
+            # 세션 상태에 결과 저장
+            st.session_state.generated_images = generated_images
+            st.session_state.scene_descriptions = scene_descriptions
+        
             status.success("✨ 웹툰 생성 완료!")
-            # 저장 버튼 추가
-            if generated_images:
-                save_config = {
-                    'type': 'story',
-                    'title': text[:100],  # 텍스트 앞부분을 제목으로
-                    'text': text,
-                    'style': config.style,
-                    'composition': config.composition,
-                    'mood': config.mood,
-                    'character_desc': config.character_desc,
-                    'aspect_ratio': config.aspect_ratio,
-                    'cut_count': cut_count,
-                    'scene_descriptions': scene_descriptions
-                }
-                if st.button("💾 이번 과정 저장하기"):
-                    session_dir = save_session(save_config, generated_images)
-                    st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
 
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")

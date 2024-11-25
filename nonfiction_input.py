@@ -7,6 +7,8 @@ from PIL import Image
 from general_text_input import TextToWebtoonConverter  # 파일 처리 기능 재사용
 from io import BytesIO
 from image_gen import generate_image_from_text
+from clip_analyzer import CLIPAnalyzer  # CLIP 분석기 추가
+
 
 @dataclass
 class NonFictionConfig:
@@ -20,6 +22,7 @@ class NonFictionConfig:
 class NonFictionConverter:
     def __init__(self, openai_client: OpenAI):
         self.client = openai_client
+        self.clip_analyzer = CLIPAnalyzer()
         self.setup_logging()
 
         self.base_style = {
@@ -285,53 +288,69 @@ class NonFictionConverter:
             return {"process": 0.5, "concept": 0.5, "system": 0.5, "comparison": 0.5}
 
     def process_submission(self, text: str, config: NonFictionConfig):
-    #"""여러 장의 이미지 생성 및 처리"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
 
-        # 1. 텍스트를 여러 장면으로 분할
+            # 1. 텍스트를 여러 장면으로 분할
             status.info("📝 내용 분석 중...")
             scenes = self.split_content_into_scenes(text, config.num_images)
             progress_bar.progress(0.2)
 
-        # 2. 각 장면별 처리
+            # 2. 각 장면별 처리
             generated_images = []
             for i, scene in enumerate(scenes):
                 status.info(f"🎨 {i+1}/{len(scenes)} 이미지 생성 중...")
-            
-            # 장면별 프롬프트 생성
+                
+                # 장면별 프롬프트 생성
                 prompt = self.create_scene_description(scene, config)
-            
-            # 이미지 생성
+                
+                # 이미지 생성
                 image_url, revised_prompt, _ = generate_image_from_text(
                     prompt=prompt,
-                    style="minimalist",  # 항상 미니멀 스타일 사용
+                    style="minimalist",
                     aspect_ratio=config.aspect_ratio,
                     negative_prompt=self.negative_elements
-            )
-            
+                )
+                
                 if image_url:
-                # imported summarize_scene 함수 사용
-                    summary = self.summarize_scene(scene)  # 자체 메소드 대신 imported 함수 사용
+                    # CLIP 점수 계산
+                    # 피드백 루프X 최초 이미지 점수
+                    clip_score = self.clip_analyzer.validate_image(
+                        image_url,
+                        prompt,
+                        return_score=True
+                    )
+                    
+                    summary = self.summarize_scene(scene)
                     generated_images.append({
-                    "url": image_url,
-                    "summary": summary,
-                    "prompt": prompt,
-                    "revised_prompt": revised_prompt
-                })
-            
+                        "url": image_url,
+                        "summary": summary,
+                        "prompt": prompt,
+                        "revised_prompt": revised_prompt,
+                        "clip_score": clip_score.get("similarity_score", 0.0)
+                    })
+                
                 progress_bar.progress((i + 1) / len(scenes))
 
-        # 3. 결과 표시
+            # 3. 결과 표시
             if generated_images:
                 cols = st.columns(min(2, len(generated_images)))
                 for i, img_data in enumerate(generated_images):
                     with cols[i % 2]:
                         st.image(img_data["url"], use_column_width=True)
-                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{img_data['summary']}</p>", 
-                              unsafe_allow_html=True)
-                    
+                        st.markdown(
+                            f"<p style='text-align: center; font-size: 14px;'>{img_data['summary']}</p>", 
+                            unsafe_allow_html=True
+                        )
+                        
+                        # CLIP 점수를 단순 숫자로 표시
+                        st.markdown(
+                            f"<p style='text-align: center; font-size: 14px;'>"
+                            f"이미지-텍스트 일치도: {img_data['clip_score']:.3f}</p>",
+                            unsafe_allow_html=True
+                        )
+                        
                         with st.expander(f"이미지 {i+1} 상세 정보"):
                             st.text(f"사용된 프롬프트:\n{img_data['prompt']}")
                             if img_data['revised_prompt']:
@@ -343,6 +362,7 @@ class NonFictionConverter:
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")
+
     def summarize_scene(self, description: str) -> str:
    # """장면 설명 요약"""
         try:

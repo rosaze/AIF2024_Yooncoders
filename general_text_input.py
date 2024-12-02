@@ -381,34 +381,41 @@ class TextToWebtoonConverter:
             return original_prompt
 
     def summarize_scene(self, description: str) -> str:
-        #장면 설명 요약"""
+        """
+        장면 설명 요약
+        """
         try:
-            prompt = """웹툰의 한 장면을 간단히 설명해주세요.
-        - 한 문장으로 작성할 것
-        - 캐릭터의 감정이나 심리 상태가 아닌, 객관적인 상황 묘사에 집중
-        - 예시: "한적한 카페에서 두 사람이 마주 앉아 대화를 나누고 있다."
+            # 구체적이고 상황 중심의 요약을 요청하는 프롬프트
+            prompt = """다음 웹툰 장면에 들어갈 설명을 간단히 작성하세요.
+        - 최대한 간결하고 명확하게 작성할 것
+        - 캐릭터의 감정이나 심리 상태를 묘사하지 말 것
+        - 상황 설명이나 대사 위주로 작성할 것
+        - 이미지에 대한 요약보다는 입력한 스토리의 내용이 들어갈 것. 
+        - 스토리에 대한 입력이라면 인물이 할 것 같은 말풍선 텍스트 넣기 
         - 최대 100자 이내로 작성할 것
         
-            장면:"""
+            장면: """ + description
         
+            # GPT 모델 호출
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": description}
-            ],
-                 temperature=0.7,
+                {"role": "system", "content": "당신은 간결한 웹툰 내용 설명을 작성하는 전문가입니다."},
+                {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,  # 더 일관성 있는 결과를 위해 낮은 temperature 사용
                 max_tokens=100
-        )
+            )
         
+            # GPT 응답 처리
             summary = response.choices[0].message.content.strip()
-        # 마침표로 끝나는 경우 마침표 제거
-            summary = summary.rstrip('.')
-        # 50자로 제한
+            # 100자로 제한
             return summary[:150]
         except Exception as e:
             logging.error(f"Scene summarization failed: {str(e)}")
+            # 기본적으로 첫 번째 줄 반환, 100자로 제한
             return description.split('\n')[0][:150]
+
 
     def render_ui(self):
         st.title("스토리 텍스트 시각화하기")

@@ -196,32 +196,49 @@ Must avoid:
             logging.error(f"Error in process_submission: {str(e)}")
 
     def summarize_scene(self, description: str) -> str:
-        """장면 설명 요약"""
+        """장면의 맥락과 의미를 담은 설명 생성"""
         try:
-            prompt = """다음 시각화 내용을 간단히 설명해주세요:
-        1. 한 문장으로 작성
-        2. 객관적인 설명 위주
-        3. 핵심 요소만 포함
-        4. 최대 50자 이내
-        
-            설명할 내용:"""
+            prompt = """다음 시각적 설명을 보고 장면의 맥락과 핵심 메시지를 설명해주세요.
+
+        요구사항:
+    1. 단순한 시각적 묘사("~장면이다")는 피하고, 맥락과 의미를 담아주세요
+    2. 가능한 현재형으로 설명해주세요
+    3. 필요시 인과관계나 변화를 포함해도 좋습니다
+    4. 최대 70자 이내로 작성해주세요
+
+    예시:
+    ❌ "원과 화살표가 연결된 장면이다"
+    ⭕ "물이 수증기로 변하며 순환하는 과정을 보여줍니다"
+
+    ❌ "두 개의 사각형이 비교된 장면이다"
+    ⭕ "고체와 액체 상태에서 분자의 움직임이 달라집니다"
+
+    ❌ "인물이 있는 배경 장면이다"
+    ⭕ "환경오염으로 인해 지구의 온도가 계속 상승하고 있습니다"
+
+    설명할 내용:
+    {description}"""
 
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": description}
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": description}
                 ],
                 temperature=0.7,
                 max_tokens=100
             )
-            
-            summary = response.choices[0].message.content.strip()
-            return summary[:100]
         
+            summary = response.choices[0].message.content.strip()
+            # 마침표가 없다면 추가
+            if not summary.endswith(('.', '!', '?')):
+                summary += '.'
+            return summary[:70]
+    
         except Exception as e:
             logging.error(f"Scene summarization failed: {str(e)}")
-            return description[:50]
+            return description[:70]
+                
 
     def render_ui(self):
        #UI 단순화

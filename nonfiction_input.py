@@ -3,6 +3,8 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from openai import OpenAI
 import logging
+from clip_analyzer import CLIPAnalyzer
+from datetime import datetime
 from PIL import Image
 from general_text_input import TextToWebtoonConverter
 from io import BytesIO
@@ -20,6 +22,7 @@ class NonFictionConfig:
 class NonFictionConverter:
     def __init__(self, openai_client: OpenAI):
         self.client = openai_client
+        self.clip_analyzer = CLIPAnalyzer()  # CLIP 분석기 추가
         self.setup_logging()
         
         # 시각화 타입을 스토리텔링 방식으로 변경
@@ -95,40 +98,48 @@ class NonFictionConverter:
     def create_scene_description(self, scene: str, config: NonFictionConfig) -> str:
         """장면을 웹툰 스타일의 프롬프트로 변환"""
         try:
-            vis_type = self.visualization_types[config.visualization_type]
+        # visualization_type이 유효한지 확인
+            if config.visualization_type not in self.visualization_types:
+                logging.error(f"Invalid visualization type: {config.visualization_type}")
+                # 기본값 "설명하기" 사용
+                vis_type = self.visualization_types["설명하기"]
+            else:
+                vis_type = self.visualization_types[config.visualization_type]
             
             # 입력 텍스트 길이 제한
             max_length = 200
             content = scene[:max_length] if len(scene) > max_length else scene
             
-            prompt = f"""Create a minimal-style illustration:
-
+            prompt = f"""Create a clear, simple educational illustration:
 
 Main concept: {content}
 
 Style requirements:
-- minimalistic drawing
-- Use only essential visual elements to explain the concept
-- Focus on the information, not characters or backgrounds
-- Simple, clean, vector-style graphics
-- Minimal design with clear meaning
-- Bold lines and simple shapes
-- Core colors only (2-3 colors maximum)
+- {vis_type['style']}
+- Layout: {vis_type['layout']}
+- Elements: {vis_type['elements']}
+- Visual style: {vis_type['prompt']}
+- Single focused concept per image
+- Bold, clean lines like manhwa/manga style
+- Soft, pleasant color palette (2-3 colors maximum)
+- White or very light background
 
 Must include:
-- Clear visual representation of the concept
-- Simple metaphors or symbols
-- Essential objects  visual
-- Key points highlighted visually
+- One clear focal point
+- Simple visual metaphor
+- Easy-to-understand layout
+- Gentle, rounded edges
+- Ample white space around main element
 
 Must avoid:
-- Characters or people
-- Decorative elements
-- Complex backgrounds
-- 4 or more lines
-- Text labels
-- Multiple scenes
-- Any unnecessary details"""
+- Multiple competing concepts
+- Complex diagrams or flowcharts
+- Technical symbols or formulas
+- Connecting lines or arrows
+- Text labels or numbers
+- Cluttered compositions
+- Multiple scenes in one image
+"""
 
             return prompt
 
@@ -137,59 +148,143 @@ Must avoid:
             raise
 
     def process_submission(self, text: str, config: NonFictionConfig):
+        
         """웹툰 스타일의 교육 컨텐츠 생성"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
+
+            # 로그 저장을 위한 세션 데이터 초기화
+            if 'generation_logs' not in st.session_state:
+                st.session_state.generation_logs = []
+
+            # 분석 시작 시간 기록
+            start_time = datetime.now()
+
+            # CLIP 분석기 정보 표시
+            st.sidebar.markdown("### 🔍 CLIP 분석기 정보")
+            st.sidebar.info(f"디바이스: {self.clip_analyzer.device}")
+            st.sidebar.info(f"모델: openai/clip-vit-base-patch32")
 
             # 1. 텍스트를 설명 가능한 장면들로 분할
             status.info("📝 내용 분석 중...")
             scenes = self.split_content_into_scenes(text, config.num_images)
             progress_bar.progress(0.2)
 
-            # 2. 각 장면별 처리
+            # 2. 결과 저장을 위한 딕셔너리 초기화
             generated_images = {}
             scene_descriptions = []
 
+            # 생성 메트릭 저장용 딕셔너리
+            generation_metrics = {
+                'total_time': 0,
+                'avg_clip_score': 0,
+                'scores': [],
+                'generation_attempts': []
+            }
+
+            # 3. 각 장면별 처리
             for i, scene in enumerate(scenes):
+                scene_start_time = datetime.now()
                 status.info(f"🎨 {i+1}/{len(scenes)} 장면 생성 중...")
-                
+            
                 # 장면별 프롬프트 생성
                 prompt = self.create_scene_description(scene, config)
                 scene_descriptions.append(prompt)
-                
+            
                 # 이미지 생성
                 image_url, _, _ = generate_image_from_text(
                     prompt=prompt,
                     style="minimalistic",
                     aspect_ratio=config.aspect_ratio,
-                     negative_prompt=(
-                    "detail, texture, pattern, gradient, shadow, 3d, realistic, "
-                    "decoration, background, icon, symbol, text, label, number, "
-                    "curved line, complex shape, multiple color, noise, dot, "
-                    "grid, frame, border, effect, design element"
-                )
-                )
-                
+                    negative_prompt=(
+                         "abstract art, messy layout, unclear connections, "
+                            "photorealistic style, 3d rendering, "
+                                "complex textures, dark colors, "
+                                    "artistic interpretation, painterly style"
+                    )
+                    )
+            
                 if image_url:
                     generated_images[i] = image_url
+                
+                    # CLIP 검증 및 품질 분석
+                    quality_check = self.clip_analyzer.validate_image(
+                        image_url, 
+                        prompt,
+                        return_score=True
+                    )
+
                     if i % 2 == 0:
                         cols = st.columns(min(2, config.num_images - i))
-                    
-                    with cols[i % 2]:
-                        st.image(image_url, use_column_width=True)
-                        summary = self.summarize_scene(scene)
-                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
-                              unsafe_allow_html=True)
                 
+                    with cols[i % 2]:
+                        # 이미지 표시
+                        st.image(image_url, use_column_width=True)
+                    
+                        # 분석 결과 표시를 위한 expander 추가
+                        with st.expander("🔍 CLIP 분석 결과", expanded=False):
+                            col1, col2 = st.columns(2)
+                            score = quality_check.get("similarity_score", 0.0)
+                        
+                            with col1:
+                                st.metric("품질 점수", f"{score:.2f}")
+                            with col2:
+                                if score >= 0.7:
+                                    st.success("✓ 높은 품질")
+                                elif score >= 0.5:
+                                    st.warning("△ 중간 품질")
+                                else:
+                                    st.error("⚠ 낮은 품질")
+                        
+                            # 세부 분석 결과 표시
+                            st.write("프롬프트 매칭:")
+                            st.progress(score)
+                        
+                            # 생성 시간 표시
+                            scene_time = (datetime.now() - scene_start_time).total_seconds()
+                            st.info(f"⏱ 생성 시간: {scene_time:.1f}초")
+                    
+                        # 장면 설명 표시
+                        summary = self.summarize_scene(scene)
+                        st.markdown(
+                            f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
+                            unsafe_allow_html=True
+                        )
+
+                    # 메트릭 업데이트
+                    generation_metrics['scores'].append(score)
+                    generation_metrics['generation_attempts'].append({
+                        'scene_number': i + 1,
+                        'clip_score': score,
+                        'generation_time': scene_time
+                    })
+            
                 progress_bar.progress((i + 1) / config.num_images)
 
-            # 세션 상태 업데이트
+            # 전체 생성 시간 계산
+            generation_metrics['total_time'] = (datetime.now() - start_time).total_seconds()
+            generation_metrics['avg_clip_score'] = sum(generation_metrics['scores']) / len(generation_metrics['scores'])
+
+            # 생성 로그 저장
+            st.session_state.generation_logs.append({
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'config': config.__dict__,
+                'metrics': generation_metrics
+            })
+
+            # 생성 결과 요약 표시
+            st.sidebar.markdown("### 📊 생성 결과 요약")
+            st.sidebar.metric("평균 CLIP 점수", f"{generation_metrics['avg_clip_score']:.2f}")
+            st.sidebar.metric("총 생성 시간", f"{generation_metrics['total_time']:.1f}초")
+
+            # 세션 상태에 결과 저장
             st.session_state.generated_images = generated_images
             st.session_state.scene_descriptions = scene_descriptions
-            
-            progress_bar.progress(1.0)
+
             status.success("✨ 웹툰 생성 완료!")
+
+         
 
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
@@ -226,14 +321,14 @@ Must avoid:
                 {"role": "user", "content": description}
                 ],
                 temperature=0.7,
-                max_tokens=100
+                max_tokens=200
             )
         
             summary = response.choices[0].message.content.strip()
             # 마침표가 없다면 추가
             if not summary.endswith(('.', '!', '?')):
                 summary += '.'
-            return summary[:70]
+            return summary[:150]
     
         except Exception as e:
             logging.error(f"Scene summarization failed: {str(e)}")
@@ -282,7 +377,7 @@ Must avoid:
             with col1:
                 visualization_type = st.selectbox(
                 "어떤 방식으로 설명할까요?",
-                ["설명하기", "비교하기", "과정 보여주기", "원리 설명하기"],
+                list(self.visualization_types.keys()),  
                 help="컨텐츠에 가장 적합한 설명 방식을 선택하세요"
             )
             

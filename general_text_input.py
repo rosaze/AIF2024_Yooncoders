@@ -531,22 +531,40 @@ class TextToWebtoonConverter:
                 st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
 
     
+    # process_submission 메소드 내의 이미지 생성 부분을 다음과 같이 수정
+
     def process_submission(self, text: str, config: SceneConfig, cut_count: int):
-        """유연한 컷 수에 따른 만화 생성 및 CLIP 검증"""
         try:
             progress_bar = st.progress(0)
             status = st.empty()
         
-            # 1. 선택된 컷 수에 따른 장면 분석
+            # 로그 저장을 위한 세션 데이터 초기화
+            if 'generation_logs' not in st.session_state:
+                st.session_state.generation_logs = []
+        
+            # 분석 시작 시간 기록
+            start_time = datetime.now()
+        
+            # CLIP 분석기 정보 표시
+            st.sidebar.markdown("### 🔍 CLIP 분석기 정보")
+            st.sidebar.info(f"디바이스: {self.clip_analyzer.device}")
+            st.sidebar.info(f"모델: openai/clip-vit-base-patch32")
+        
             status.info("📖 스토리 구조 분석 중...")
             scenes = self.analyze_story_by_cuts(text, cut_count)
         
-            # 2. 결과 저장을 위한 딕셔너리 초기화
             generated_images = {}
             scene_descriptions = []
         
-            # 3. 그리드 레이아웃 계산
-            cols_per_row = min(cut_count, 2)  # 한 줄에 최대 2개
+            # 생성 메트릭 저장용 딕셔너리
+            generation_metrics = {
+                'total_time': 0,
+                'avg_clip_score': 0,
+                'scores': [],
+                'generation_attempts': []
+            }
+        
+            cols_per_row = min(cut_count, 2)
             rows_needed = (cut_count + 1) // 2
         
             for row in range(rows_needed):
@@ -558,7 +576,9 @@ class TextToWebtoonConverter:
                     scene_type, scene = list(scenes.items())[i]
                     status.info(f"🎨 {scene_type} 장면 생성 중... ({i+1}/{cut_count})")
                 
-                    # 장면 설명 생성
+                    scene_start_time = datetime.now()
+                
+                    # 장면 설명 생성 및 CLIP 분석
                     description = self.create_scene_description(scene, config)
                     enhanced_description = self.clip_analyzer.enhance_prompt(
                         description, config.style, config.mood
@@ -569,10 +589,9 @@ class TextToWebtoonConverter:
                     image_url = self.generate_image(enhanced_description, config)
                 
                     if image_url:
-                        # 생성된 이미지 저장
                         generated_images[i] = image_url
                     
-                        # CLIP 검증 수행
+                        # CLIP 검증 및 품질 분석
                         quality_check = self.clip_analyzer.validate_image(
                             image_url, 
                             description,
@@ -583,33 +602,73 @@ class TextToWebtoonConverter:
                             # 이미지 표시
                             st.image(image_url, caption=f"컷 {i+1}: {scene_type}", use_column_width=True)
                         
-                            # 장면 설명
+                            # 분석 결과 표시를 위한 expander 추가
+                            with st.expander("🔍 CLIP 분석 결과", expanded=False):
+                                col1, col2 = st.columns(2)
+                                score = quality_check.get("similarity_score", 0.0)
+                            
+                                with col1:
+                                    st.metric("품질 점수", f"{score:.2f}")
+                                with col2:
+                                    if score >= 0.7:
+                                        st.success("✓ 높은 품질")
+                                    elif score >= 0.5:
+                                        st.warning("△ 중간 품질")
+                                    else:
+                                        st.error("⚠ 낮은 품질")
+                            
+                                # 세부 분석 결과 표시
+                                st.write("프롬프트 매칭:")
+                                st.progress(score)
+                            
+                                # 생성 시간 표시
+                                scene_time = (datetime.now() - scene_start_time).total_seconds()
+                                st.info(f"⏱ 생성 시간: {scene_time:.1f}초")
+                        
+                            # 장면 설명 표시
                             summary = self.summarize_scene(description)
                             st.markdown(
-                                f"<p style='text-align: center; font-size: 14px;'>{summary}</p>", 
+                                f"<p style='text-align: center; font-size: 14px;'>{summary}</p>",
                                 unsafe_allow_html=True
                             )
-                        
-                            # CLIP 점수 표시
-                            score = quality_check.get("similarity_score", 0.0)
-                            st.markdown(
-                                f"<p style='text-align: center; font-size: 12px; color: gray;'>"
-                                f"이미지 품질 점수: {score:.2f}</p>",
-                                unsafe_allow_html=True
-                            )
+                    
+                        # 메트릭 업데이트
+                        generation_metrics['scores'].append(score)
+                        generation_metrics['generation_attempts'].append({
+                            'scene_number': i + 1,
+                            'scene_type': scene_type,
+                            'clip_score': score,
+                            'generation_time': scene_time
+                        })
                 
                     progress_bar.progress((i + 1) / cut_count)
-
-            # 세션 상태에 결과 저장
+        
+            # 전체 생성 시간 계산
+            generation_metrics['total_time'] = (datetime.now() - start_time).total_seconds()
+            generation_metrics['avg_clip_score'] = sum(generation_metrics['scores']) / len(generation_metrics['scores'])
+        
+            # 생성 로그 저장
+            st.session_state.generation_logs.append({
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'config': config.__dict__,
+                'metrics': generation_metrics
+            })
+        
+            # 생성 결과 요약 표시
+            st.sidebar.markdown("### 📊 생성 결과 요약")
+            st.sidebar.metric("평균 CLIP 점수", f"{generation_metrics['avg_clip_score']:.2f}")
+            st.sidebar.metric("총 생성 시간", f"{generation_metrics['total_time']:.1f}초")
+        
+            # 세션 상태 업데이트
             st.session_state.generated_images = generated_images
             st.session_state.scene_descriptions = scene_descriptions
         
             status.success("✨ 웹툰 생성 완료!")
-
+        
+          
         except Exception as e:
             st.error(f"오류가 발생했습니다: {str(e)}")
             logging.error(f"Error in process_submission: {str(e)}")
-
 def main():
     st.set_page_config(
         page_title="Text to Webtoon Converter",

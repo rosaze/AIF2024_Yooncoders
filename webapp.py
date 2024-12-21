@@ -138,13 +138,7 @@ def main():
             converter.render_ui()
         except Exception as e:
             st.error(f"교육/과학 콘텐츠 처리 중 오류 발생: {str(e)}")
-    """
-    elif st.session_state.page == "news_search":
-        try:
-            render_news_search()
-        except Exception as e:
-            st.error(f"뉴스 검색 처리 중 오류 발생: {str(e)}")
-    """
+  
     # 에러 처리
     try:
         if st.session_state.get("error"):

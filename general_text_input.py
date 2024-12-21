@@ -31,7 +31,7 @@ class TextToWebtoonConverter:
                 "emphasis": "Focus on simplicity and negative space"
             },
             "픽토그램": {
-                "prompt": "pictogram style,symbolic representation, simplified shapes, icon-like style",
+                "prompt": "pictogram style, symbolic representation, simplified shapes, icon-like style",
                 "emphasis": "Clear silhouettes and symbolic elements"
             },
             "카툰": {

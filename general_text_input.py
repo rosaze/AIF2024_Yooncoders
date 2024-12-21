@@ -31,7 +31,7 @@ class TextToWebtoonConverter:
                 "emphasis": "Focus on simplicity and negative space"
             },
             "픽토그램": {
-                "prompt": "symbolic representation, simplified shapes, icon-like style",
+                "prompt": "pictogram style,symbolic representation, simplified shapes, icon-like style",
                 "emphasis": "Clear silhouettes and symbolic elements"
             },
             "카툰": {
@@ -382,43 +382,100 @@ class TextToWebtoonConverter:
 
     def summarize_scene(self, description: str) -> str:
         """
-        장면 설명 요약
+       장면 설명 요약 - 원본 텍스트의 맥락을 유지하면서 사용자 이해를 돕는 설명 생성
+    
+    Args:
+        description (str): 현재 장면 설명
+        original_text (str): 사용자가 입력한 원본 텍스트
+        scene_index (int): 현재 장면 인덱스
+    Returns:
+        str: 맥락이 유지된 요약 설명
         """
         try:
             # 구체적이고 상황 중심의 요약을 요청하는 프롬프트
-            prompt = """다음 웹툰 장면에 들어갈 설명을 간단히 작성하세요.
-        - 최대한 간결하고 명확하게 작성할 것
-        - 캐릭터의 감정이나 심리 상태를 묘사하지 말 것
-        - 상황 설명이나 대사 위주로 작성할 것
-        - 이미지에 대한 요약보다는 입력한 스토리의 내용이 들어갈 것. 
-        - 스토리에 대한 입력이라면 인물이 할 것 같은 말풍선 텍스트 넣기 
-        - 최대 100자 이내로 작성할 것
-        
-            장면: """ + description
+            prompt = """다음 내용을 바탕으로 현재 장면에 대한 설명을 만들어주세요.
+원본 텍스트:
+{original_text}
+
+현재 장면 설명:
+{description}
+요구사항:
+1. 원본 텍스트의 내용과 표현을 최대한 유지할 것
+2. 현재 장면에 해당하는 부분을 중심으로 설명할 것
+3. 이야기의 흐름이 자연스럽게 이어지도록 할 것
+4. 기술적인 설명이나 시각적 묘사는 최소화할 것
+5. 실제 스토리텔링에 중점을 둘 것
+6. 150자 이내로 작성할 것
+예시:
+❌ "위에서 내려다보는 구도로, 왼쪽에는 개미들이 오른쪽에는 베짱이가 위치해 있다"
+⭕ "무더운 여름날, 주인공이 무엇을 하는데 무엇이 발생했다. "
+⭕"주인공은 어떠한 상황에 있다"
+
+장면 번호: {scene_index + 1}"""
         
             # GPT 모델 호출
             response = self.client.chat.completions.create(
                 model="gpt-4",
                 messages=[
-                {"role": "system", "content": "당신은 간결한 웹툰 내용 설명을 작성하는 전문가입니다."},
+                {"role": "system", "content": "당신은 사용자의 원본 텍스트를 기반으로 자연스러운 스토리텔링을 하는 작가입니다."},
                 {"role": "user", "content": prompt}
                 ],
                 temperature=0.5,  # 더 일관성 있는 결과를 위해 낮은 temperature 사용
-                max_tokens=100
+                max_tokens=200
             )
         
             # GPT 응답 처리
             summary = response.choices[0].message.content.strip()
             # 100자로 제한
-            return summary[:150]
+            if len(summary) > 150:
+            # 마지막 마침표 위치 찾기
+                last_period = summary[:150].rfind('.')
+                if last_period != -1:
+                    summary = summary[:last_period + 1]
+                else:
+                # 마침표가 없는 경우 150자에서 자르고 마침표 추가
+                    summary = summary[:150] + '.'
+
         except Exception as e:
             logging.error(f"Scene summarization failed: {str(e)}")
-            # 기본적으로 첫 번째 줄 반환, 100자로 제한
-            return description.split('\n')[0][:150]
+            return description[:150] + ('...' if len(description) > 150 else '')
+        return summary
 
 
     def render_ui(self):
         st.title("스토리 텍스트 시각화하기")
+         # UI 가이드 expander 추가
+        with st.sidebar.expander("📌 인터페이스 가이드", expanded=True):
+            st.markdown("""
+        ### 🎨 스타일 설정
+        - **미니멀리스트**: 단순하고 깔끔한 디자인
+        - **픽토그램**: 상징적인 아이콘 스타일
+        - **카툰**: 과장되고 생동감 있는 표현
+        - **웹툰**: 한국식 만화 스타일
+        - **예술적**: 회화적이고 창의적인 표현
+        
+        ### 🌈 분위기 선택
+        - **일상적**: 자연스럽고 편안한 톤
+        - **긴장된**: 극적이고 강렬한 분위기
+        - **진지한**: 무게감 있는 표현
+        - **따뜻한**: 포근하고 긍정적인 감성
+        - **즐거운**: 밝고 경쾌한 분위기
+        
+        ### 📐 구도 설정
+        - **배경과 인물**: 전체적인 장면 구성
+        - **근접 샷**: 감정과 표정 강조
+        - **대화형**: 캐릭터 간 상호작용
+        - **풍경 위주**: 배경 중심 연출
+        - **일반**: 기본적인 구도
+        """)
+        
+        st.info("""
+        💡 **활용 팁**
+        - 스토리의 분위기에 맞는 스타일을 선택하세요
+        - 장면의 감정을 잘 표현할 수 있는 분위기를 고르세요
+        - 상황에 적합한 구도로 설정하면 더 효과적입니다
+        """)
+
     
     # 세션 상태 초기화
         if 'generated_images' not in st.session_state:
@@ -501,7 +558,7 @@ class TextToWebtoonConverter:
                 }
             
                 config = SceneConfig(
-                    style="미니멀리스트",
+                    style=style,
                     composition=composition,
                     mood=mood,
                     character_desc=character_desc,

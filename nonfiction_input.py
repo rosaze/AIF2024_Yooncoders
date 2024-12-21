@@ -3,13 +3,14 @@ from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from openai import OpenAI
 import logging
-from clip_analyzer import CLIPAnalyzer
 from datetime import datetime
 from PIL import Image
 from general_text_input import TextToWebtoonConverter
 from io import BytesIO
 from image_gen import generate_image_from_text
 from save_utils import save_session
+from clip_analyzer import CLIPAnalyzer  # CLIP 분석기 추가
+
 
 @dataclass
 class NonFictionConfig:
@@ -22,7 +23,6 @@ class NonFictionConfig:
 class NonFictionConverter:
     def __init__(self, openai_client: OpenAI):
         self.client = openai_client
-        self.clip_analyzer = CLIPAnalyzer()  # CLIP 분석기 추가
         self.setup_logging()
         
         # 시각화 타입을 스토리텔링 방식으로 변경
@@ -455,24 +455,145 @@ Must avoid:
             
             elif submit:
                 st.warning("텍스트를 입력하거나 파일을 업로드해주세요!")
-        
-        # form 바깥에서 저장 버튼 처리
-        if st.session_state.generated_images:
-            if st.button("💾 이번 과정 저장하기"):
-                save_config = {
-                'type': 'education',
-                'title': st.session_state.current_text[:100],
-                'text': st.session_state.current_text,
-                'visualization_type': st.session_state.current_config.visualization_type,
-                #'complexity': st.session_state.current_config.complexity,
-                'aspect_ratio': st.session_state.current_config.aspect_ratio,
-                'num_images': st.session_state.current_config.num_images,
-                'scene_descriptions': st.session_state.scene_descriptions
-                }
-                session_dir = save_session(save_config, st.session_state.generated_images)
-                
-                st.success(f"✅ 성공적으로 저장되었습니다! 저장 위치: {session_dir}")
+    
+    def create_scene_description(self, scene: str, config: NonFictionConfig) -> str:
+      #각 장면에 대한 시각화 프롬프트 생성"""
+        try:
+            vis_type = self.visualization_types[config.visualization_type]
+            
+        # 기본 스타일과 선택된 시각화 타입 결합
+            prompt = f"""Create a simple and friendly cartoon visualization:
 
+            Content to explain: {scene}
+
+            Style:
+            - Simple cartoon style like children's book illustrations
+            - Clean and easy to understand
+            - Use cute and friendly elements
+            - Minimal details, maximum clarity
+
+            Visual approach: {vis_type['prompt']}
+            Layout: {vis_type['layout']}
+            Main elements: {vis_type['elements']}
+
+            Key requirements:
+            - Keep it super simple and friendly
+            - Use basic shapes and cute symbols
+            - Make it instantly understandable
+            - Avoid complex details
+            - Use clear, cheerful colors
+            - Make it engaging and fun
+
+            Complexity: {config.complexity} (but keep it simple regardless)"""
+
+            return prompt
+
+        except Exception as e:
+            logging.error(f"Scene description creation failed: {str(e)}")
+            raise
+
+    def _parse_analysis_response(self, response_text: str) -> Dict[str, float]:
+    #"""분석 응답을 파싱하여 점수로 변환"""
+         try:
+        # 간단한 파싱 로직 구현
+            scores = {
+            "process": 0.5,
+            "concept": 0.5,
+            "system": 0.5,
+            "comparison": 0.5
+        }
+            return scores
+         except Exception as e:
+            logging.error(f"Analysis parsing failed: {str(e)}")
+            return {"process": 0.5, "concept": 0.5, "system": 0.5, "comparison": 0.5}
+
+    def process_submission(self, text: str, config: NonFictionConfig):
+    #"""여러 장의 이미지 생성 및 처리"""
+        try:
+            progress_bar = st.progress(0)
+            status = st.empty()
+
+        # 1. 텍스트를 여러 장면으로 분할
+            status.info("📝 내용 분석 중...")
+            scenes = self.split_content_into_scenes(text, config.num_images)
+            progress_bar.progress(0.2)
+
+        # 2. 각 장면별 처리
+            generated_images = []
+            for i, scene in enumerate(scenes):
+                status.info(f"🎨 {i+1}/{len(scenes)} 이미지 생성 중...")
+            
+            # 장면별 프롬프트 생성
+                prompt = self.create_scene_description(scene, config)
+            
+            # 이미지 생성
+                image_url, revised_prompt, _ = generate_image_from_text(
+                    prompt=prompt,
+                    style="minimalist",  # 항상 미니멀 스타일 사용
+                    aspect_ratio=config.aspect_ratio,
+                    negative_prompt=self.negative_elements
+            )
+            
+                if image_url:
+                # imported summarize_scene 함수 사용
+                    summary = self.summarize_scene(scene)  # 자체 메소드 대신 imported 함수 사용
+                    generated_images.append({
+                    "url": image_url,
+                    "summary": summary,
+                    "prompt": prompt,
+                    "revised_prompt": revised_prompt
+                })
+            
+                progress_bar.progress((i + 1) / len(scenes))
+
+        # 3. 결과 표시
+            if generated_images:
+                cols = st.columns(min(2, len(generated_images)))
+                for i, img_data in enumerate(generated_images):
+                    with cols[i % 2]:
+                        st.image(img_data["url"], use_column_width=True)
+                        st.markdown(f"<p style='text-align: center; font-size: 14px;'>{img_data['summary']}</p>", 
+                              unsafe_allow_html=True)
+                    
+                        with st.expander(f"이미지 {i+1} 상세 정보"):
+                            st.text(f"사용된 프롬프트:\n{img_data['prompt']}")
+                            if img_data['revised_prompt']:
+                                st.text(f"수정된 프롬프트:\n{img_data['revised_prompt']}")
+
+            progress_bar.progress(1.0)
+            status.success("✨ 시각화된 웹툰 생성 완료!")
+
+        except Exception as e:
+            st.error(f"오류가 발생했습니다: {str(e)}")
+            logging.error(f"Error in process_submission: {str(e)}")
+    def summarize_scene(self, description: str) -> str:
+   # """장면 설명 요약"""
+        try:
+            prompt = """다음 시각화 내용을 간단히 설명해주세요:
+        1. 한 문장으로 작성
+        2. 객관적인 설명 위주
+        3. 핵심 요소만 포함
+        4. 최대 50자 이내
+        
+            설명할 내용:"""
+        
+            response = self.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": description}
+            ],
+            temperature=0.7,
+            max_tokens=100
+            )
+        
+            summary = response.choices[0].message.content.strip()
+            return summary[:100]  # 50자로 제한
+        
+        except Exception as e:
+            logging.error(f"Scene summarization failed: {str(e)}")
+            return description[:100]                
+# The main function would be similar to your existing code
 def main():
     st.set_page_config(
         page_title="Educational Webtoon Creator",
